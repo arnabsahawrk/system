@@ -1,0 +1,36 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: inherit;
+}
+
+html {
+  scroll-padding-top: env(safe-area-inset-top, 0px);
+}
+
+html,
+body {
+  background-color: #0a0a0c;
+  height: 100%;
+}
+
+body {
+  margin: 0;
+}
+
+/* Old Safari doesn't always inherit -webkit-tap-highlight cleanly; keep taps quiet. */
+button,
+a,
+input {
+  -webkit-tap-highlight-color: transparent;
+}
