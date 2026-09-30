@@ -17,13 +17,12 @@ export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
   const dayIndex = Number(body?.dayIndex);
   const name = typeof body?.name === "string" ? body.name : "";
-  const emoji = typeof body?.emoji === "string" && body.emoji ? body.emoji : undefined;
 
   if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex > 6) {
     return NextResponse.json({ error: "dayIndex must be 0–6" }, { status: 400 });
   }
 
-  const result = await addTemplateTask(dayIndex as DayIndex, name, emoji);
+  const result = await addTemplateTask(dayIndex as DayIndex, name);
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
   return NextResponse.json({ ok: true, id: result.id });
 }

@@ -2,24 +2,30 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { Lock, ListChecks, Settings as SettingsIcon } from "lucide-react";
+import { Lock, ListChecks, PauseCircle, Settings as SettingsIcon } from "lucide-react";
 import { BrandMark } from "./brand-mark";
 import { DayCard } from "./day-card";
 import { WeeklySummaryCard } from "./weekly-summary-card";
 import { TrackerSection } from "./tracker-section";
 import { SettingsSheet } from "./settings-sheet";
+import { LiveClock } from "./live-clock";
 import { detectTimeZone, getAppDateKey, getAppDayIndex } from "@/lib/date";
 import { clearTabUnlocked, isTabUnlocked } from "@/lib/tab-lock";
-import type { CurrentWeek, WeekSummary } from "@/lib/types";
+import type { CurrentWeek, HistoryStats, WeekSummary } from "@/lib/types";
 import type { Settings } from "@/lib/session";
 
+const LOAD_TIMEOUT_MS = 9000;
+const EMPTY_STATS: HistoryStats = { weekCount: 0, avgCompleted: 0, avgTotal: 0, avgPercent: 0 };
+
 export function Dashboard({ initialSettings }: { initialSettings: Settings }) {
-  const router = useRouter();
   const [settings, setSettings] = useState(initialSettings);
-  const [week, setWeek] = useState<CurrentWeek | null>(null);
+  const [week, setWeek] = useState<CurrentWeek | null | undefined>(undefined); // undefined = not loaded yet
   const [history, setHistory] = useState<WeekSummary[]>([]);
+  const [stats, setStats] = useState<HistoryStats>(EMPTY_STATS);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [timedOut, setTimedOut] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [locking, setLocking] = useState(false);
@@ -29,32 +35,59 @@ export function Dashboard({ initialSettings }: { initialSettings: Settings }) {
   const loadWeek = useCallback(async () => {
     const res = await fetch("/api/week/current");
     if (res.status === 401) {
-      router.replace("/unlock");
+      window.location.href = "/unlock";
       return;
     }
     if (res.ok) setWeek(await res.json());
-  }, [router]);
+  }, []);
 
   const loadHistory = useCallback(async () => {
     const res = await fetch("/api/week/history");
-    if (res.ok) setHistory(await res.json());
+    if (res.ok) {
+      const page = await res.json();
+      setHistory(page.weeks);
+      setStats(page.stats);
+      setHasMore(page.hasMore);
+    }
   }, []);
+
+  async function loadMore() {
+    const oldest = history[history.length - 1];
+    if (!oldest) return;
+    setLoadingMore(true);
+    try {
+      const res = await fetch(`/api/week/history?before=${oldest.weekNumber}`);
+      if (res.ok) {
+        const page = await res.json();
+        setHistory((prev) => [...prev, ...page.weeks]);
+        setStats(page.stats);
+        setHasMore(page.hasMore);
+      }
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   // Same tab-lock idea as Streakment: the server cookie lives for the whole
   // browser session, so a reopened tab would otherwise still pass it. This
-  // sessionStorage check makes each tab ask again on open regardless.
+  // sessionStorage check makes each tab ask again on open regardless. A
+  // hard navigation (not the client router) so this can never be left
+  // half-finished by a stalled soft-navigation.
   useEffect(() => {
     if (initialSettings.hasPasscode && !isTabUnlocked()) {
-      router.replace("/unlock");
+      window.location.href = "/unlock";
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Actively locks the moment this tab closes, so even a browser that
   // restores sessionStorage on tab restore still finds the cookie gone.
+  // Excludes normal in-app link clicks (pagehide also fires on those) —
+  // only a real close/reload/external-navigation should lock.
   useEffect(() => {
     if (!settings.hasPasscode) return;
-    const onHide = () => {
+    const onHide = (e: PageTransitionEvent) => {
+      if (e.persisted) return; // bfcache suspend, not a close
       navigator.sendBeacon(
         "/api/passcode",
         new Blob([JSON.stringify({ action: "lock" })], { type: "application/json" })
@@ -64,8 +97,7 @@ export function Dashboard({ initialSettings }: { initialSettings: Settings }) {
     return () => window.removeEventListener("pagehide", onHide);
   }, [settings.hasPasscode]);
 
-  // Keeps the stored timezone following the person, not the device — see
-  // /api/settings PATCH. Only writes when it actually changed.
+  // Keeps the stored timezone following the person, not the device.
   useEffect(() => {
     const detected = detectTimeZone();
     if (detected && detected !== settings.timezone) {
@@ -80,16 +112,10 @@ export function Dashboard({ initialSettings }: { initialSettings: Settings }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    setLoading(true);
-    Promise.all([loadWeek(), loadHistory()])
-      .catch(() => setError("Couldn't load your data — check the API/database are reachable."))
-      .finally(() => setLoading(false));
-  }, [loadWeek, loadHistory]);
-
-  // Keeps "today" honest if the tab stays open across 6:00 AM: re-reads the
-  // clock every minute (and the moment the tab becomes visible again) and,
-  // when the app-day changes, reloads so a rollover shows up without a refresh.
+  // Keeps "today" honest if the tab stays open across 6:00 AM: re-checks
+  // the clock every minute (and the moment the tab becomes visible again)
+  // and, when the app-day changes, reloads so a rollover shows up without
+  // a manual refresh.
   useEffect(() => {
     const tick = () => setNow(new Date());
     const id = setInterval(tick, 60_000);
@@ -112,6 +138,20 @@ export function Dashboard({ initialSettings }: { initialSettings: Settings }) {
     lastAppDate.current = appDate;
   }, [appDate, loadWeek, loadHistory]);
 
+  useEffect(() => {
+    setLoading(true);
+    setTimedOut(false);
+    const timeout = setTimeout(() => setTimedOut(true), LOAD_TIMEOUT_MS);
+    Promise.all([loadWeek(), loadHistory()])
+      .catch(() => setError("Couldn't load your data — check the API/database are reachable."))
+      .finally(() => {
+        clearTimeout(timeout);
+        setLoading(false);
+      });
+    return () => clearTimeout(timeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function toggleTask(taskId: string) {
     setWeek((prev) => {
       if (!prev) return prev;
@@ -129,65 +169,72 @@ export function Dashboard({ initialSettings }: { initialSettings: Settings }) {
 
   async function lockNow() {
     setLocking(true);
-    try {
-      await fetch("/api/passcode", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "lock" }),
-      });
-      clearTabUnlocked();
-      router.replace("/unlock");
-    } finally {
-      setLocking(false);
-    }
+    await fetch("/api/passcode", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "lock" }),
+    });
+    clearTabUnlocked();
+    window.location.href = "/unlock";
   }
 
   const timeZone = settings.timezone;
   const todayIndex = getAppDayIndex(now, timeZone);
 
-  if (loading || !week) {
+  if (loading || week === undefined) {
     return (
-      <div className="flex min-h-dvh items-center justify-center bg-bg">
-        <BrandMark size={36} />
+      <div className="flex min-h-dvh flex-col items-center justify-center gap-4 bg-bg px-6">
+        <BrandMark size={36} className="animate-pulse-soft" />
+        {timedOut && (
+          <div className="flex flex-col items-center gap-2 text-center">
+            <p className="font-mono text-xs text-ink-muted">Still loading — this is taking longer than usual.</p>
+            <button
+              onClick={() => window.location.reload()}
+              className="rounded-full border border-border px-3 py-1 font-mono text-xs text-ink-muted hover:border-border-strong hover:text-ink"
+            >
+              Reload
+            </button>
+          </div>
+        )}
       </div>
     );
   }
 
   return (
     <div className="min-h-dvh bg-bg pb-16 text-ink">
-      <header className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 pb-2 pt-8 sm:px-6">
+      <header className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 pb-2 pt-8 sm:px-6">
         <div className="flex items-center gap-3">
           <BrandMark size={34} />
           <div>
             <h1 className="font-mono text-lg font-bold uppercase tracking-[0.25em]">System</h1>
-            <p className="font-mono text-[10px] text-ink-faint">{timeZone}</p>
+            <LiveClock timeZone={timeZone} />
           </div>
         </div>
         <div className="flex items-center gap-1">
+          {settings.hasPasscode && (
+            <button
+              onClick={lockNow}
+              disabled={locking}
+              aria-label="Lock now"
+              className="rounded-lg p-2 text-ink-muted hover:bg-surface-2 hover:text-ink disabled:opacity-40"
+            >
+              <Lock size={18} />
+            </button>
+          )}
           <Link
             href="/manage"
-            title="Manage tasks"
+            aria-label="Manage tasks"
             className="rounded-lg p-2 text-ink-muted hover:bg-surface-2 hover:text-ink"
           >
             <ListChecks size={18} />
           </Link>
           <button
             onClick={() => setSettingsOpen(true)}
-            title="Settings"
+            aria-label="Settings"
             className="rounded-lg p-2 text-ink-muted hover:bg-surface-2 hover:text-ink"
           >
             <SettingsIcon size={18} />
           </button>
-          {settings.hasPasscode && (
-            <button
-              onClick={lockNow}
-              disabled={locking}
-              title="Lock now"
-              className="rounded-lg p-2 text-ink-muted hover:bg-surface-2 hover:text-ink disabled:opacity-40"
-            >
-              <Lock size={18} />
-            </button>
-          )}
         </div>
       </header>
 
@@ -199,51 +246,84 @@ export function Dashboard({ initialSettings }: { initialSettings: Settings }) {
         </div>
       )}
 
-      <main className="mx-auto flex max-w-6xl flex-col gap-6 px-4 pt-4 sm:px-6 lg:flex-row lg:items-start">
-        <section className="flex-1">
-          <h2 className="mb-3 font-mono text-xs uppercase tracking-[0.2em] text-ink-muted">
-            Everyday
-          </h2>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {week.days.map((day, i) => (
-              <DayCard
-                key={day.dayIndex}
-                day={day}
-                isUnlocked={i === todayIndex}
-                onToggleTask={toggleTask}
-              />
-            ))}
+      {week === null ? (
+        <PausedState pendingAction={settings.pendingAction} onOpenSettings={() => setSettingsOpen(true)} />
+      ) : (
+        <>
+          <main className="mx-auto flex max-w-6xl flex-col gap-6 px-4 pt-4 sm:px-6 lg:flex-row lg:items-start">
+            <section className="flex-1">
+              <h2 className="mb-3 font-mono text-xs uppercase tracking-[0.2em] text-ink-muted">Everyday</h2>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {week.days.map((day, i) => (
+                  <DayCard key={day.dayIndex} day={day} isUnlocked={i === todayIndex} onToggleTask={toggleTask} />
+                ))}
+              </div>
+            </section>
+
+            <aside className="w-full lg:w-[320px] lg:shrink-0">
+              <h2 className="mb-3 font-mono text-xs uppercase tracking-[0.2em] text-ink-muted">Weekly</h2>
+              <WeeklySummaryCard week={week} todayIndex={todayIndex} />
+            </aside>
+          </main>
+
+          <div className="mx-auto max-w-6xl px-4 pt-6 sm:px-6">
+            <TrackerSection
+              history={history}
+              stats={stats}
+              hasMore={hasMore}
+              onLoadMore={loadMore}
+              loadingMore={loadingMore}
+              currentWeek={week}
+            />
           </div>
-        </section>
-
-        <aside className="w-full lg:w-[320px] lg:shrink-0">
-          <h2 className="mb-3 font-mono text-xs uppercase tracking-[0.2em] text-ink-muted">
-            Weekly
-          </h2>
-          <WeeklySummaryCard week={week} todayIndex={todayIndex} />
-        </aside>
-      </main>
-
-      <div className="mx-auto max-w-6xl px-4 pt-6 sm:px-6">
-        <TrackerSection weeks={[...history, { ...week, finalized: false }]} />
-      </div>
+        </>
+      )}
 
       <footer className="mx-auto max-w-6xl px-4 pt-10 text-center sm:px-6">
-        <a
-          href="https://arnabsaha.vercel.app/"
-          className="font-mono text-[11px] text-ink-faint underline decoration-dotted underline-offset-4 hover:text-ink-muted"
-        >
-          A project by Arnab Saha
-        </a>
+        <span className="font-mono text-[11px] text-ink-faint">
+          A project by{" "}
+          <a
+            href="https://arnabsaha.vercel.app/"
+            className="underline decoration-dotted underline-offset-4 hover:text-ink-muted"
+          >
+            Arnab Saha
+          </a>
+        </span>
       </footer>
 
       {settingsOpen && (
         <SettingsSheet
           settings={settings}
           onClose={() => setSettingsOpen(false)}
-          onPasscodeChanged={(hasPasscode) => setSettings((s) => ({ ...s, hasPasscode }))}
+          onSettingsChanged={(patch) => setSettings((s) => ({ ...s, ...patch }))}
         />
       )}
+    </div>
+  );
+}
+
+function PausedState({
+  pendingAction,
+  onOpenSettings,
+}: {
+  pendingAction: "pause" | "resume" | null;
+  onOpenSettings: () => void;
+}) {
+  return (
+    <div className="mx-auto flex max-w-6xl flex-col items-center gap-3 px-4 pt-20 text-center sm:px-6">
+      <PauseCircle size={32} className="text-ink-faint" />
+      <h2 className="font-mono text-sm uppercase tracking-[0.2em] text-ink-muted">System is paused</h2>
+      <p className="max-w-xs font-mono text-xs text-ink-faint">
+        {pendingAction === "resume"
+          ? "Resuming at the next reset (Saturday 06:00)."
+          : "Nothing is being tracked or emailed right now."}
+      </p>
+      <button
+        onClick={onOpenSettings}
+        className="mt-2 rounded-full border border-border px-4 py-1.5 font-mono text-xs text-ink-muted hover:border-border-strong hover:text-ink"
+      >
+        Open Settings
+      </button>
     </div>
   );
 }

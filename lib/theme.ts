@@ -1,8 +1,9 @@
 /**
  * Turns a completion percentage into a color and a message. The message
- * bands are fixed (given, word for word); the color is a smooth
- * interpolation so the weekly card, the tracker table, and the email don't
- * jump between jarring flat colors at each band boundary.
+ * bands are fixed (given, word for word — no emoji except 100%, by
+ * request); the color is a smooth interpolation so the weekly card, the
+ * tracker table, and the email don't jump between flat colors at each
+ * band boundary.
  */
 
 export interface ProgressBand {
@@ -11,14 +12,13 @@ export interface ProgressBand {
   message: string;
 }
 
-// Exact wording — do not reword, these are meant to read as System "talking".
 export const PROGRESS_BANDS: ProgressBand[] = [
-  { min: 0, max: 19, message: "Next week, lock in \u{1F512}" },
-  { min: 20, max: 39, message: "Keep pushing, there's more left \u{1F44A}" },
-  { min: 40, max: 59, message: "Decent, now raise the bar \u26A1" },
-  { min: 60, max: 79, message: "That's some serious progress \u{1FAE1}" },
-  { min: 80, max: 89, message: "Okay, that's impressive \u{1F4AF}" },
-  { min: 90, max: 99, message: "What a week, seriously showed up \u{1F525}" },
+  { min: 0, max: 19, message: "Not enough, time to lock in" },
+  { min: 20, max: 39, message: "Keep pushing, there's more left" },
+  { min: 40, max: 59, message: "Decent, now raise the bar" },
+  { min: 60, max: 79, message: "That's some serious progress, keep going" },
+  { min: 80, max: 89, message: "That's impressive, don't slow down" },
+  { min: 90, max: 99, message: "You're right there, finish strong" },
   { min: 100, max: 100, message: "Holy moly \u{1F631}" },
 ];
 
@@ -49,7 +49,6 @@ const COLOR_STOPS: { stop: number; rgb: [number, number, number] }[] = [
 export function getProgressColor(percent: number): string {
   const p = clampPercent(percent);
   for (let i = 0; i < COLOR_STOPS.length - 1; i++) {
-    // Safe by the loop bound: both indices are always in range here.
     const a = COLOR_STOPS[i]!;
     const b = COLOR_STOPS[i + 1]!;
     if (p >= a.stop && p <= b.stop) {
@@ -68,7 +67,6 @@ export function getProgressColor(percent: number): string {
 /** A soft (14% alpha) tint of the same color, for card backgrounds/rows. */
 export function getProgressTint(percent: number): string {
   const match = getProgressColor(percent).match(/\d+/g);
-  // getProgressColor always returns "rgb(r, g, b)", so a match always has 3 items.
   if (!match || match.length < 3) return "rgba(255,255,255,0.05)";
   const [r, g, b] = match;
   return `rgba(${r}, ${g}, ${b}, 0.14)`;

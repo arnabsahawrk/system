@@ -29,7 +29,6 @@ export const DAY_SHORT_LABELS: Record<DayIndex, string> = {
 export interface TaskEntry {
   id: string;
   name: string;
-  emoji?: string;
   completed: boolean;
 }
 
@@ -55,11 +54,25 @@ export interface CurrentWeek extends WeekSummary {
   days: DayEntry[];
 }
 
-/** A single task-name row in the editable per-day template (Phase 2 feature). */
+/** All-time stats footer for the Tracker — computed over every finalized
+ * week, independent of how many are currently paginated into view. */
+export interface HistoryStats {
+  weekCount: number;
+  avgCompleted: number;
+  avgTotal: number;
+  avgPercent: number;
+}
+
+export interface HistoryPage {
+  weeks: WeekSummary[];
+  stats: HistoryStats;
+  hasMore: boolean;
+}
+
+/** A single task-name row in the editable per-day template. */
 export interface TaskTemplateItem {
   id: string;
   dayIndex: DayIndex;
   name: string;
-  emoji?: string;
   sortOrder: number;
 }

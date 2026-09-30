@@ -65,7 +65,6 @@ export function DayCard({
                   task.completed ? "text-ink-muted line-through" : "text-ink"
                 }`}
               >
-                {task.emoji ? `${task.emoji} ` : ""}
                 {task.name}
               </span>
             </label>

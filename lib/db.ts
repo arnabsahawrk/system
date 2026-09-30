@@ -22,7 +22,19 @@ const types = {
 };
 
 const sql =
-  global.__sql ?? postgres(process.env.DATABASE_URL ?? "", { ssl: "require", max: 1, types });
+  global.__sql ??
+  postgres(process.env.DATABASE_URL ?? "", {
+    ssl: "require",
+    // Was max:1. A single connection plus Next dev's Fast Refresh
+    // occasionally recreating modules could starve a request of any free
+    // connection and hang forever with nothing to show the user but a
+    // spinner — some headroom removes that failure mode. Still trivial
+    // against Neon free tier's limits for a single-user app.
+    max: 3,
+    idle_timeout: 20,
+    connect_timeout: 10,
+    types,
+  });
 
 global.__sql = sql;
 export default sql;

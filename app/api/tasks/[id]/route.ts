@@ -7,9 +7,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const { id } = await params;
   const body = await req.json().catch(() => ({}));
   const name = typeof body?.name === "string" ? body.name : "";
-  const emoji = typeof body?.emoji === "string" && body.emoji ? body.emoji : undefined;
 
-  const result = await renameTemplateTask(id, name, emoji);
+  const result = await renameTemplateTask(id, name);
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
   return NextResponse.json({ ok: true });
 }

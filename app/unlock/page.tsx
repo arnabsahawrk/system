@@ -1,12 +1,10 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
 import { markTabUnlocked } from "@/lib/tab-lock";
 import { BrandMark } from "@/components/brand-mark";
 
 export default function UnlockPage() {
-  const router = useRouter();
   const [passcode, setPasscode] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -23,16 +21,17 @@ export default function UnlockPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "unlock", passcode }),
     });
-    setBusy(false);
     if (res.ok) {
       markTabUnlocked();
-      router.replace("/");
-      router.refresh();
-    } else {
-      setErr("Wrong passcode.");
-      setPasscode("");
-      setMisses((m) => m + 1);
+      // A full navigation, not the client router — this is the one place a
+      // stuck soft-navigation would be most confusing to land on.
+      window.location.href = "/";
+      return;
     }
+    setBusy(false);
+    setErr("Wrong passcode.");
+    setPasscode("");
+    setMisses((m) => m + 1);
   }
 
   async function forgot() {
@@ -51,8 +50,11 @@ export default function UnlockPage() {
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center gap-8 bg-bg px-6 text-ink">
       <div className="flex flex-col items-center gap-3">
-        <BrandMark size={44} />
-        <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-ink-muted">Locked</p>
+        <BrandMark size={44} className={busy ? "animate-pulse-soft" : undefined} />
+        <div className="text-center">
+          <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-ink-muted">Locked</p>
+          <p className="mt-1 font-mono text-sm text-ink">Enter the passcode</p>
+        </div>
       </div>
 
       <form onSubmit={submit} className="w-full max-w-xs">

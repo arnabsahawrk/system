@@ -1,34 +1,33 @@
 # System — plan and status
 
-Kept in the repo so any future session (or a new chat) can resume from files instead of from memory.
+Kept in the repo so any future session can resume from files instead of from memory.
 
-## Architecture
+## Architecture (v2)
 
-- **Time model** (`lib/date.ts`): every day/week decision is a pure function of `(now, timeZone)` after subtracting 6 hours. No timers, no stored "current day" flag.
-- **Data** (`schema.sql`): `user_settings` (singleton), `task_templates` (the live plan), `weeks`, `week_days`, `week_day_tasks` (a frozen copy of the plan per week), `rollover_log` (email de-dupe).
-- **Rollover** (`lib/rollover.ts`): `ensureCurrentWeek(now)` runs on every dashboard load and from the daily cron. Row-locks the latest week, then loops finalize → create until it reaches the real current week. Emails only weeks that ended in the last 48 h.
-- **Lock** (`lib/session.ts`, `app/api/passcode`, `lib/tab-lock.ts`): same design as Streakment — AES-256-GCM encrypted passcode, server-checked cookie, per-tab sessionStorage flag, `pagehide` beacon locks on close, "forgot passcode" emails it back after 3 misses.
-- **Email** (`lib/email.ts`): Brevo REST call, HTML + plain-text weekly summary, UTF-8 declared.
+- **Time model** (`lib/date.ts`): unchanged — every day/week decision is a pure function of `(now, timeZone)` after subtracting 6 hours.
+- **Data** (`schema.sql`): `user_settings` (singleton — now also holds `notifications_enabled`, `paused`, `pending_action`), `task_templates` (the live plan, no emoji), `weeks` (no cached totals), `week_tasks` (one row per task per day, day/date inline — merged from the old week_days + week_day_tasks).
+- **Rollover** (`lib/rollover.ts`): `ensureCurrentWeek(now)` — same catch-up loop as before, now also branching on `paused`/`pending_action` each iteration: pause takes effect (no new week created) the moment the running week's boundary is reached; resume creates exactly one fresh week at the real current boundary, skipping the idle gap rather than backfilling it.
+- **History pagination** (`lib/weeks.ts` `getHistoryPage`): 10 finalized weeks per page, newest-first, `before=<weekNumber>` to page further back; a separate aggregate query computes all-time stats (week count, average tasks/done/percent) over every finalized week regardless of page size.
+- **Lock**: unchanged design (Streakment-style encrypted passcode, server cookie, per-tab sessionStorage, `pagehide` beacon) — now using hard `window.location` navigation instead of the Next router for every lock-state transition, and a `/api/pause` route reusing the same `verifyPasscode` check for the new pause/resume/notifications-adjacent settings.
 
-## Verified (in a sandbox, against local Postgres 16)
+## Verified this round (sandbox, local Postgres 16)
 
-- 6 AM / Saturday boundary: 10 cases via `npm run verify:dates`.
-- Multi-week gap: 3 stale weeks caught up in order, honest 0%, no emails for stale weeks, landed on the real current week.
-- Locked-day tick rejected (409); passcode set / wrong / right / cookie-less access (401).
-- `tsc --noEmit` and `next build` clean.
-- Bugs found and fixed by that testing: Postgres `date` parsed as JS `Date` (broke week comparison); email had no charset (emoji became mojibake); auto-lock fired on in-app link navigation.
+- `tsc --noEmit`, `eslint .` (0 errors), `next build` all clean.
+- Paginated history: page 1 + `before=` page 2 return correct, non-overlapping weeks; all-time stats match hand totals.
+- Pause: wrong passcode rejected (401); correct passcode accepted; `pendingAction` set without touching the live week; crossing the boundary finalizes+would-email the running week and creates **no** new week; `paused` flips to true.
+- Resume: requested while paused; crossing a boundary creates **exactly one** new week dated at the real current boundary (confirmed via direct DB inspection — no backfilled weeks for the paused gap).
+- Found and fixed mid-testing: `getCurrentWeek` wasn't checking `paused` at all and returned the last finalized week mislabeled as live — now returns `null` and the dashboard shows a dedicated paused screen.
+- PWA icon corner bug reproduced and fixed (transparent corners under a second OS-level mask); new full-bleed + maskable icons generated and visually checked.
 
 ## Not verified
 
-- Live Brevo send (no key or network in the sandbox) — request follows Brevo's documented `v3/smtp/email` shape.
-- Neon itself (local Postgres 16 was used), Vercel deploy, cron firing.
-- The UI in a real browser, and on iPhone 7 / Safari 15 specifically.
-- Task-edit deferral end to end through `/manage` (true by construction: only `createWeek` reads templates).
-- `npm run lint`.
+- Live Brevo send, Neon itself, Vercel deploy/cron — same as before, no key/network for these in the sandbox.
+- The full HTTP-level pause/resume flow through a running server + browser cookies specifically (verified instead via direct calls to the same library functions the routes call — the sandbox's long-running dev server kept getting killed between tool calls partway through this round, so I fell back to the more reliable direct-call test, which exercises identical logic minus the HTTP/cookie layer).
+- The reorder-by-buttons UI and the paginated "Load 10 more" button, in an actual browser.
+- `notifications_enabled = false` actually suppressing a send end-to-end (the gating is a single `if` before the send call — low risk, but not click-tested).
 
 ## Next
 
-1. **Data display beyond week table + chart:** monthly roll-up, yearly GitHub-style heatmap (same style as Streakment), streak of weeks ≥ 60 %, best week, per-task consistency ("Exercise 18/24 weeks"), color-banded weekly history.
-2. **Service worker** for an offline app shell (manifest, icons and iOS meta already exist).
-3. Rename / reorder UI in `/manage` (the rename API already exists).
-4. Optional: a second email trigger via GitHub Actions if the fixed daily cron time becomes a problem while travelling.
+1. **True drag-and-drop** for task reordering, if the up/down buttons feel like a downgrade — needs a touch-compatible (Pointer Events, not HTML5 dragstart) implementation, deliberately not attempted this round given the testing constraints above.
+2. **More data views**: yearly heatmap (Streakment-style), streak of weeks ≥ some threshold, best week, per-task consistency across weeks.
+3. Service worker for an offline app shell.

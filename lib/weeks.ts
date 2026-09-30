@@ -1,111 +1,135 @@
 import sql from "@/lib/db";
 import { ensureCurrentWeek } from "@/lib/rollover";
 import { getAppDateKey } from "@/lib/date";
-import type { CurrentWeek, DayEntry, DayIndex, WeekSummary } from "@/lib/types";
+import type { CurrentWeek, DayEntry, DayIndex, HistoryPage, WeekSummary } from "@/lib/types";
 
 /** Always call this before reading/writing week data — it's what makes the
  * rollover happen "automatically": no cron has to have run yet, this call
  * itself brings the database up to date with `now` if it's behind. */
-export async function getCurrentWeek(now: Date): Promise<CurrentWeek> {
+export async function getCurrentWeek(now: Date): Promise<CurrentWeek | null> {
   await ensureCurrentWeek(now);
 
-  const [week] = await sql<
-    { id: string; week_number: number; start_date: string; total_tasks: number; completed_tasks: number; percent: number }[]
-  >`
-    select id, week_number, start_date, total_tasks, completed_tasks, percent
-    from weeks order by week_number desc limit 1
+  const [settingsRow] = await sql<{ paused: boolean }[]>`
+    select paused from user_settings where singleton = true
   `;
-  if (!week) throw new Error("getCurrentWeek: no week exists after ensureCurrentWeek");
+  // Paused: the last real week already finalized normally at the boundary
+  // (see lib/rollover.ts) — there is deliberately no "current" week to
+  // show. The dashboard renders its paused screen for this, rather than
+  // displaying that closed week as if it were still live.
+  if (settingsRow?.paused) return null;
 
-  const days = await sql<{ day_index: number; date: string }[]>`
-    select day_index, date from week_days where week_id = ${week.id} order by day_index
+  const [week] = await sql<{ id: string; week_number: number; start_date: string }[]>`
+    select id, week_number, start_date from weeks order by week_number desc limit 1
   `;
-  const tasks = await sql<
-    { day_index: number; id: string; name: string; emoji: string | null; completed: boolean }[]
-  >`
-    select wd.day_index, wdt.id, wdt.name, wdt.emoji, wdt.completed
-    from week_day_tasks wdt
-    join week_days wd on wd.id = wdt.week_day_id
-    where wd.week_id = ${week.id}
-    order by wd.day_index, wdt.sort_order
+  if (!week) return null; // never started yet
+
+  const tasks = await sql<{ day_index: number; date: string; id: string; name: string; completed: boolean }[]>`
+    select day_index, date, id, name, completed from week_tasks
+    where week_id = ${week.id} order by day_index, sort_order
   `;
 
-  const dayEntries: DayEntry[] = days.map((d) => ({
-    dayIndex: d.day_index as DayIndex,
-    dateKey: d.date,
-    tasks: tasks
-      .filter((t) => t.day_index === d.day_index)
-      .map((t) => ({ id: t.id, name: t.name, emoji: t.emoji ?? undefined, completed: t.completed })),
-  }));
+  const dayIndexes = [0, 1, 2, 3, 4, 5, 6] as DayIndex[];
+  const days: DayEntry[] = dayIndexes.map((dayIndex) => {
+    const dayTasks = tasks.filter((t) => t.day_index === dayIndex);
+    return {
+      dayIndex,
+      dateKey: dayTasks[0]?.date ?? week.start_date,
+      tasks: dayTasks.map((t) => ({ id: t.id, name: t.name, completed: t.completed })),
+    };
+  });
+  const total = tasks.length;
+  const completed = tasks.filter((t) => t.completed).length;
 
   return {
     weekNumber: week.week_number,
     startDateKey: week.start_date,
-    completed: week.completed_tasks,
-    total: week.total_tasks,
-    percent: week.percent,
+    completed,
+    total,
+    percent: total === 0 ? 0 : Math.round((completed / total) * 100),
     finalized: false,
-    days: dayEntries,
+    days,
   };
 }
 
 export type ToggleResult = "ok" | "not-found" | "locked";
 
-/** Flips one task and keeps the parent week's cached counters in sync.
- * Enforced here, not just in the UI: a task can only be toggled if it
- * belongs to *today's* week_day (per the 6am rule), so a direct API call
- * can't back-date or future-date a tick any more than the UI can. */
+/** Flips one task. Enforced here, not just in the UI: a task can only be
+ * toggled if it belongs to *today's* row (per the 6am rule), so a direct
+ * API call can't back-date or future-date a tick any more than the UI can. */
 export async function toggleTask(taskId: string, now: Date, timeZone: string): Promise<ToggleResult> {
   const todayKey = getAppDateKey(now, timeZone);
+  const [target] = await sql<{ date: string }[]>`select date from week_tasks where id = ${taskId}`;
+  if (!target) return "not-found";
+  if (target.date !== todayKey) return "locked";
 
-  return sql.begin(async (tx) => {
-    const [target] = await tx<{ week_id: string; date: string }[]>`
-      select wd.week_id as week_id, wd.date as date
-      from week_day_tasks wdt
-      join week_days wd on wd.id = wdt.week_day_id
-      where wdt.id = ${taskId}
-    `;
-    if (!target) return "not-found" as const;
-    if (String(target.date) !== todayKey) return "locked" as const;
-
-    await tx`
-      update week_day_tasks
-      set completed = not completed,
-          completed_at = case when not completed then now() else null end
-      where id = ${taskId}
-    `;
-
-    const [stats] = await tx<{ total: number; completed: number }[]>`
-      select count(*)::int as total, count(*) filter (where wdt.completed)::int as completed
-      from week_day_tasks wdt
-      join week_days wd on wd.id = wdt.week_day_id
-      where wd.week_id = ${target.week_id}
-    `;
-    const total = stats?.total ?? 0;
-    const completed = stats?.completed ?? 0;
-    const percent = total === 0 ? 0 : Math.round((completed / total) * 100);
-    await tx`
-      update weeks set total_tasks = ${total}, completed_tasks = ${completed}, percent = ${percent}
-      where id = ${target.week_id}
-    `;
-    return "ok" as const;
-  });
+  await sql`
+    update week_tasks
+    set completed = not completed, completed_at = case when not completed then now() else null end
+    where id = ${taskId}
+  `;
+  return "ok";
 }
 
-export async function getHistory(limit = 26): Promise<WeekSummary[]> {
-  const rows = await sql<
-    { week_number: number; start_date: string; total_tasks: number; completed_tasks: number; percent: number }[]
-  >`
-    select week_number, start_date, total_tasks, completed_tasks, percent
-    from weeks where finalized = true
-    order by week_number desc limit ${limit}
-  `;
-  return rows.map((r) => ({
+const HISTORY_PAGE_SIZE = 10;
+
+/** Newest-first, paginated (10 at a time) — see lib/types.ts HistoryPage.
+ * `stats` is computed over *every* finalized week regardless of page size,
+ * so the Tracker's all-time averages stay correct as more pages load. */
+export async function getHistoryPage(beforeWeekNumber?: number): Promise<HistoryPage> {
+  const rows = beforeWeekNumber
+    ? await sql<{ week_number: number; start_date: string; total: number; completed: number }[]>`
+        select w.week_number, w.start_date,
+          count(wt.id)::int as total, count(wt.id) filter (where wt.completed)::int as completed
+        from weeks w
+        left join week_tasks wt on wt.week_id = w.id
+        where w.finalized = true and w.week_number < ${beforeWeekNumber}
+        group by w.id order by w.week_number desc limit ${HISTORY_PAGE_SIZE + 1}
+      `
+    : await sql<{ week_number: number; start_date: string; total: number; completed: number }[]>`
+        select w.week_number, w.start_date,
+          count(wt.id)::int as total, count(wt.id) filter (where wt.completed)::int as completed
+        from weeks w
+        left join week_tasks wt on wt.week_id = w.id
+        where w.finalized = true
+        group by w.id order by w.week_number desc limit ${HISTORY_PAGE_SIZE + 1}
+      `;
+
+  const hasMore = rows.length > HISTORY_PAGE_SIZE;
+  const page = rows.slice(0, HISTORY_PAGE_SIZE);
+  const weeks: WeekSummary[] = page.map((r) => ({
     weekNumber: r.week_number,
     startDateKey: r.start_date,
-    total: r.total_tasks,
-    completed: r.completed_tasks,
-    percent: r.percent,
+    total: r.total,
+    completed: r.completed,
+    percent: r.total === 0 ? 0 : Math.round((r.completed / r.total) * 100),
     finalized: true,
   }));
+
+  const [stats] = await sql<{ week_count: number; avg_completed: number; avg_total: number }[]>`
+    select
+      count(distinct w.id)::int as week_count,
+      coalesce(avg(per_week.completed), 0)::float as avg_completed,
+      coalesce(avg(per_week.total), 0)::float as avg_total
+    from weeks w
+    join lateral (
+      select count(*)::int as total, count(*) filter (where wt.completed)::int as completed
+      from week_tasks wt where wt.week_id = w.id
+    ) per_week on true
+    where w.finalized = true
+  `;
+
+  const weekCount = stats?.week_count ?? 0;
+  const avgCompleted = stats?.avg_completed ?? 0;
+  const avgTotal = stats?.avg_total ?? 0;
+
+  return {
+    weeks,
+    hasMore,
+    stats: {
+      weekCount,
+      avgCompleted: Math.round(avgCompleted * 10) / 10,
+      avgTotal: Math.round(avgTotal * 10) / 10,
+      avgPercent: avgTotal === 0 ? 0 : Math.round((avgCompleted / avgTotal) * 100),
+    },
+  };
 }

@@ -8,6 +8,9 @@ export interface Settings {
   timezone: string;
   notifyEmail: string;
   hasPasscode: boolean;
+  notificationsEnabled: boolean;
+  paused: boolean;
+  pendingAction: "pause" | "resume" | null;
 }
 
 /** The passcode is encrypted, not hashed — "forgot passcode" recovers it
@@ -35,18 +38,30 @@ export function decryptPasscode(blob: string): string {
   return Buffer.concat([decipher.update(enc), decipher.final()]).toString("utf8");
 }
 
+interface SettingsRow {
+  timezone: string;
+  notify_email: string;
+  passcode_enc: string | null;
+  notifications_enabled: boolean;
+  paused: boolean;
+  pending_action: "pause" | "resume" | null;
+}
+
 /** Reads the one settings row, creating it on first access. Personal
  * single-user app: there is exactly one of these, always. */
 export async function getSettings(): Promise<Settings> {
-  const [row] = await sql<{ timezone: string; notify_email: string; passcode_enc: string | null }[]>`
+  const [row] = await sql<SettingsRow[]>`
     insert into user_settings (singleton) values (true)
     on conflict (singleton) do update set updated_at = user_settings.updated_at
-    returning timezone, notify_email, passcode_enc
+    returning timezone, notify_email, passcode_enc, notifications_enabled, paused, pending_action
   `;
   return {
     timezone: row?.timezone ?? "Asia/Dhaka",
     notifyEmail: row?.notify_email ?? "arnabsahawrk@gmail.com",
     hasPasscode: !!row?.passcode_enc,
+    notificationsEnabled: row?.notifications_enabled ?? true,
+    paused: row?.paused ?? false,
+    pendingAction: row?.pending_action ?? null,
   };
 }
 
@@ -62,4 +77,15 @@ export async function isUnlocked(): Promise<boolean> {
   if (!row?.passcode_enc) return true;
   const cookie = (await cookies()).get(PASSCODE_COOKIE)?.value;
   return !!cookie && cookie === row.passcode_enc;
+}
+
+/** For actions that should require re-proving the passcode even though the
+ * session is already unlocked (pausing the whole app). Returns true when
+ * there's no passcode at all — nothing to re-verify against. */
+export async function verifyPasscode(passcode: string): Promise<boolean> {
+  const [row] = await sql<{ passcode_enc: string | null }[]>`
+    select passcode_enc from user_settings where singleton = true
+  `;
+  if (!row?.passcode_enc) return true;
+  return decryptPasscode(row.passcode_enc) === passcode;
 }

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronUp, Plus, Trash2 } from "lucide-react";
 import { isTabUnlocked } from "@/lib/tab-lock";
 import { DAY_LABELS } from "@/lib/types";
 import type { DayIndex, TaskTemplateItem } from "@/lib/types";
@@ -17,19 +17,21 @@ export function ManageTasks({ hasPasscode }: { hasPasscode: boolean }) {
   const [busyDay, setBusyDay] = useState<number | null>(null);
 
   useEffect(() => {
-    if (hasPasscode && !isTabUnlocked()) router.replace("/unlock");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- hard nav is intentional for this security boundary, see components/dashboard.tsx
+    if (hasPasscode && !isTabUnlocked()) window.location.href = "/unlock";
+  }, [hasPasscode]);
 
   async function load() {
     const res = await fetch("/api/tasks");
-    if (res.status === 401) return router.replace("/unlock");
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- hard nav is intentional for this security boundary, see components/dashboard.tsx
+    if (res.status === 401) return void (window.location.href = "/unlock");
     if (res.ok) setItems(await res.json());
   }
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // load is stable across renders (it doesn't close over any props/state
+    // that changes), so this really does only need to run once on mount.
   }, []);
 
   async function addTask(dayIndex: DayIndex) {
@@ -56,10 +58,42 @@ export function ManageTasks({ hasPasscode }: { hasPasscode: boolean }) {
     await load();
   }
 
+  async function move(dayIndex: DayIndex, index: number, direction: -1 | 1) {
+    if (!items) return;
+    const dayItems = items.filter((t) => t.dayIndex === dayIndex).sort((a, b) => a.sortOrder - b.sortOrder);
+    const swapWith = index + direction;
+    if (swapWith < 0 || swapWith >= dayItems.length) return;
+    const reordered = [...dayItems];
+    const [moved] = reordered.splice(index, 1);
+    reordered.splice(swapWith, 0, moved!);
+    const orderedIds = reordered.map((t) => t.id);
+
+    // Optimistic: re-sort locally right away, then persist.
+    setItems((prev) =>
+      prev
+        ? prev.map((t) => {
+            if (t.dayIndex !== dayIndex) return t;
+            const newOrder = orderedIds.indexOf(t.id);
+            return newOrder === -1 ? t : { ...t, sortOrder: newOrder };
+          })
+        : prev
+    );
+    setBusyDay(dayIndex);
+    try {
+      await fetch("/api/tasks/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dayIndex, orderedIds }),
+      });
+    } finally {
+      setBusyDay(null);
+    }
+  }
+
   if (!items) {
     return (
       <div className="flex min-h-dvh items-center justify-center bg-bg">
-        <BrandMark size={36} />
+        <BrandMark size={36} className="animate-pulse-soft" />
       </div>
     );
   }
@@ -67,15 +101,10 @@ export function ManageTasks({ hasPasscode }: { hasPasscode: boolean }) {
   return (
     <div className="min-h-dvh bg-bg pb-16 text-ink">
       <header className="mx-auto flex max-w-6xl items-center gap-3 px-4 pb-2 pt-8 sm:px-6">
-        <button
-          onClick={() => router.push("/")}
-          className="rounded-lg p-2 text-ink-muted hover:bg-surface-2 hover:text-ink"
-        >
+        <button onClick={() => router.push("/")} className="rounded-lg p-2 text-ink-muted hover:bg-surface-2 hover:text-ink">
           <ArrowLeft size={18} />
         </button>
-        <div>
-          <h1 className="font-mono text-lg font-bold uppercase tracking-[0.25em]">Manage tasks</h1>
-        </div>
+        <h1 className="font-mono text-lg font-bold uppercase tracking-[0.25em]">Manage tasks</h1>
       </header>
 
       <div className="mx-auto max-w-6xl px-4 pt-2 sm:px-6">
@@ -91,10 +120,7 @@ export function ManageTasks({ hasPasscode }: { hasPasscode: boolean }) {
             .filter((t) => t.dayIndex === dayIndex)
             .sort((a, b) => a.sortOrder - b.sortOrder);
           return (
-            <div
-              key={dayIndex}
-              className="flex flex-col gap-2 rounded-xl2 border border-border bg-surface p-4"
-            >
+            <div key={dayIndex} className="flex flex-col gap-2 rounded-xl2 border border-border bg-surface p-4">
               <div className="flex items-center justify-between">
                 <span className="font-mono text-[11px] uppercase tracking-[0.2em] text-ink-muted">
                   {DAY_LABELS[dayIndex]}
@@ -106,12 +132,27 @@ export function ManageTasks({ hasPasscode }: { hasPasscode: boolean }) {
                 {dayItems.length === 0 && (
                   <li className="py-1 font-mono text-xs text-ink-faint">No tasks — a rest day</li>
                 )}
-                {dayItems.map((t) => (
-                  <li
-                    key={t.id}
-                    className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 hover:bg-surface-2"
-                  >
-                    <span className="truncate text-sm text-ink">{t.name}</span>
+                {dayItems.map((t, i) => (
+                  <li key={t.id} className="flex items-center gap-1 rounded-lg px-2 py-1.5 hover:bg-surface-2">
+                    <div className="flex flex-col">
+                      <button
+                        onClick={() => move(dayIndex, i, -1)}
+                        disabled={i === 0 || busyDay === dayIndex}
+                        className="text-ink-faint hover:text-ink disabled:opacity-20"
+                        aria-label="Move up"
+                      >
+                        <ChevronUp size={13} />
+                      </button>
+                      <button
+                        onClick={() => move(dayIndex, i, 1)}
+                        disabled={i === dayItems.length - 1 || busyDay === dayIndex}
+                        className="text-ink-faint hover:text-ink disabled:opacity-20"
+                        aria-label="Move down"
+                      >
+                        <ChevronDown size={13} />
+                      </button>
+                    </div>
+                    <span className="flex-1 truncate text-sm text-ink">{t.name}</span>
                     <button
                       onClick={() => removeTask(t.id)}
                       className="shrink-0 text-ink-faint hover:text-clay-strong"

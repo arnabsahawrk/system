@@ -6,21 +6,11 @@ import { parseDateKey } from "./date";
 /**
  * Weekly summary email, sent once — right at the Saturday-6am rollover,
  * covering the week that just ended, before the new week's data exists.
- * Phase 2 wires this into the rollover function; this file is the
- * ready-to-call piece (template + Brevo call) built ahead of that.
  *
  * Provider: Brevo (brevo.com), free tier — 300 emails/day, no card needed.
- * REST call only (no @getbrevo/brevo SDK): one endpoint, keeps the
- * dependency list small and behaves identically on Vercel's serverless
- * functions and the GitHub Actions rollover ping.
- *
- * Setup the user still needs to do once in the Brevo dashboard:
- *  1. Create an API key under SMTP & API -> API Keys.
- *  2. Verify the "from" address under Senders (Brevo confirms it by email —
- *     for a personal project the simplest option is verifying your own
- *     gmail address rather than a whole domain).
- *  3. Set BREVO_API_KEY, NOTIFY_FROM_EMAIL, NOTIFY_EMAIL in .env.local /
- *     Vercel project settings (see .env.example).
+ * REST call only (no SDK): one endpoint, keeps the dependency list small
+ * and behaves identically on Vercel's serverless functions and the daily
+ * cron ping.
  */
 
 export interface FinishedWeekData {
@@ -54,10 +44,8 @@ export function renderWeeklySummaryEmail(week: FinishedWeekData): {
 } {
   const message = getProgressMessage(week.percent);
   const color = getProgressColor(week.percent);
-  const dateRange = `${formatDateLabel(week.startDateKey)} \u2013 ${formatDateLabel(
-    week.endDateKey
-  )}`;
-  const subject = `System — Week ${week.weekNumber}: ${week.percent}% — ${message}`;
+  const dateRange = `${formatDateLabel(week.startDateKey)} \u2013 ${formatDateLabel(week.endDateKey)}`;
+  const subject = `System \u2014 Week ${week.weekNumber}: ${week.percent}% \u2014 ${message}`;
 
   const dayRows = week.days
     .map((day) => {
@@ -68,7 +56,7 @@ export function renderWeeklySummaryEmail(week: FinishedWeekData): {
           const markColor = t.completed ? "#3f8f52" : "#b3413f";
           return `<span style="display:inline-block;margin:0 10px 4px 0;font-size:13px;color:#3a3a3a;white-space:nowrap;">
             <span style="color:${markColor};font-weight:700;">${mark}</span>
-            ${escapeHtml(t.emoji ? `${t.emoji} ` : "")}${escapeHtml(t.name)}
+            ${escapeHtml(t.name)}
           </span>`;
         })
         .join("");
@@ -85,20 +73,18 @@ export function renderWeeklySummaryEmail(week: FinishedWeekData): {
     .join("");
 
   const textLines = [
-    `SYSTEM — Week ${week.weekNumber} (${dateRange})`,
-    `${week.completed}/${week.total} goals — ${week.percent}% — ${message}`,
+    `SYSTEM \u2014 Week ${week.weekNumber} (${dateRange})`,
+    `${week.completed}/${week.total} goals \u2014 ${week.percent}% \u2014 ${message}`,
     "",
     ...week.days.map((day) => {
       const doneCount = day.tasks.filter((t) => t.completed).length;
-      const taskBits = day.tasks
-        .map((t) => `${t.completed ? "[x]" : "[ ]"} ${t.name}`)
-        .join("  ");
-      return `${DAY_LABELS[day.dayIndex]} (${formatDateLabel(day.dateKey)}) — ${doneCount}/${
+      const taskBits = day.tasks.map((t) => `${t.completed ? "[x]" : "[ ]"} ${t.name}`).join("  ");
+      return `${DAY_LABELS[day.dayIndex]} (${formatDateLabel(day.dateKey)}) \u2014 ${doneCount}/${
         day.tasks.length
       }: ${taskBits || "no tasks"}`;
     }),
     "",
-    "A project by Arnab Saha — https://arnabsaha.vercel.app/",
+    "A project by Arnab Saha \u2014 https://arnabsaha.vercel.app/",
   ];
 
   const html = `<!doctype html>
@@ -152,7 +138,12 @@ const BREVO_ENDPOINT = "https://api.brevo.com/v3/smtp/email";
 /** Low-level Brevo call, shared by the weekly summary and the passcode
  * "forgot passcode" recovery email. Returns false instead of throwing on
  * failure so a bad send never crashes the request that triggered it. */
-export async function sendEmail(opts: { to: string; subject: string; html: string; text?: string }): Promise<boolean> {
+export async function sendEmail(opts: {
+  to: string;
+  subject: string;
+  html: string;
+  text?: string;
+}): Promise<boolean> {
   const apiKey = process.env.BREVO_API_KEY;
   const fromEmail = process.env.BREVO_SENDER_EMAIL;
   if (!apiKey || !fromEmail) return false;

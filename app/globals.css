@@ -28,9 +28,28 @@ body {
   margin: 0;
 }
 
+/* Hide scrollbars everywhere, but keep the actual scrolling behavior —
+ * requested site-wide. Applies to the page itself and any inner scroll
+ * container (e.g. a wide chart or table on a small screen). */
+* {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* old Edge */
+}
+*::-webkit-scrollbar {
+  display: none; /* Safari / Chrome */
+}
+
 /* Old Safari doesn't always inherit -webkit-tap-highlight cleanly; keep taps quiet. */
 button,
 a,
 input {
   -webkit-tap-highlight-color: transparent;
+}
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+.animate-pulse-soft {
+  animation: pulse-soft 1.6s ease-in-out infinite;
 }
