@@ -53,7 +53,7 @@ export default function UnlockPage() {
         <BrandMark size={44} className={busy ? "animate-pulse-soft" : undefined} />
         <div className="text-center">
           <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-ink-muted">Locked</p>
-          <p className="mt-1 font-mono text-sm text-ink">Enter the passcode</p>
+          <p className="mt-1 font-mono text-sm text-ink">Enter passcode</p>
         </div>
       </div>
 
