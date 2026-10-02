@@ -1,5 +1,5 @@
-import { TrackerTable } from "./tracker-table";
 import type { CurrentWeek, HistoryStats, WeekSummary } from "@/lib/types";
+import { TrackerTable } from "./tracker-table";
 
 /** No tabs — this used to switch between a table and a chart, but the
  * chart's been removed entirely by request. Styled the same plain way as
@@ -34,7 +34,7 @@ export function TrackerSection({
             disabled={loadingMore}
             className="self-center rounded-full border border-border px-4 py-1.5 font-mono text-xs text-ink-muted transition-all hover:border-border-strong hover:text-ink active:scale-95 disabled:opacity-50"
           >
-            {loadingMore ? "Loading…" : "Load 10 more"}
+            {loadingMore ? "Loading…" : "Load more ↓"}
           </button>
         )}
       </div>
