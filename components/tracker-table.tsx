@@ -22,7 +22,7 @@ export function TrackerTable({
         <thead>
           <tr className="border-b border-border text-left text-[11px] uppercase tracking-wider text-ink-muted">
             <th className="sticky top-0 z-10 bg-surface py-2 pr-3 font-normal">Week</th>
-            <th className="sticky top-0 z-10 bg-surface py-2 pr-3 font-normal">Tasks</th>
+            <th className="sticky top-0 z-10 bg-surface py-2 pr-3 font-normal">Task</th>
             <th className="sticky top-0 z-10 bg-surface py-2 pr-3 font-normal">Done</th>
             <th className="sticky top-0 z-10 bg-surface py-2 pr-3 font-normal">Progress</th>
             <th className="sticky top-0 z-10 bg-surface py-2 font-normal">Message</th>
