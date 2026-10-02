@@ -1,13 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import Link from "next/link";
-import { Lock, ListChecks, PauseCircle, Settings as SettingsIcon } from "lucide-react";
+import { Menu } from "lucide-react";
 import { BrandMark } from "./brand-mark";
 import { DayCard } from "./day-card";
 import { WeeklySummaryCard } from "./weekly-summary-card";
 import { TrackerSection } from "./tracker-section";
 import { SettingsSheet } from "./settings-sheet";
+import { Sidebar } from "./sidebar";
 import { LiveClock } from "./live-clock";
 import { detectTimeZone, getAppDateKey, getAppDayIndex } from "@/lib/date";
 import { clearTabUnlocked, isTabUnlocked } from "@/lib/tab-lock";
@@ -28,6 +28,7 @@ export function Dashboard({ initialSettings }: { initialSettings: Settings }) {
   const [timedOut, setTimedOut] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [locking, setLocking] = useState(false);
   const [now, setNow] = useState(() => new Date());
   const lastAppDate = useRef<string | null>(null);
@@ -82,8 +83,6 @@ export function Dashboard({ initialSettings }: { initialSettings: Settings }) {
 
   // Actively locks the moment this tab closes, so even a browser that
   // restores sessionStorage on tab restore still finds the cookie gone.
-  // Excludes normal in-app link clicks (pagehide also fires on those) —
-  // only a real close/reload/external-navigation should lock.
   useEffect(() => {
     if (!settings.hasPasscode) return;
     const onHide = (e: PageTransitionEvent) => {
@@ -112,10 +111,7 @@ export function Dashboard({ initialSettings }: { initialSettings: Settings }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Keeps "today" honest if the tab stays open across 6:00 AM: re-checks
-  // the clock every minute (and the moment the tab becomes visible again)
-  // and, when the app-day changes, reloads so a rollover shows up without
-  // a manual refresh.
+  // Keeps "today" honest if the tab stays open across 6:00 AM.
   useEffect(() => {
     const tick = () => setNow(new Date());
     const id = setInterval(tick, 60_000);
@@ -186,11 +182,11 @@ export function Dashboard({ initialSettings }: { initialSettings: Settings }) {
       <div className="flex min-h-dvh flex-col items-center justify-center gap-4 bg-bg px-6">
         <BrandMark size={36} className="animate-pulse-soft" />
         {timedOut && (
-          <div className="flex flex-col items-center gap-2 text-center">
+          <div className="flex animate-fade-in flex-col items-center gap-2 text-center">
             <p className="font-mono text-xs text-ink-muted">Still loading — this is taking longer than usual.</p>
             <button
               onClick={() => window.location.reload()}
-              className="rounded-full border border-border px-3 py-1 font-mono text-xs text-ink-muted hover:border-border-strong hover:text-ink"
+              className="rounded-full border border-border px-3 py-1 font-mono text-xs text-ink-muted transition-all hover:border-border-strong hover:text-ink active:scale-95"
             >
               Reload
             </button>
@@ -201,8 +197,20 @@ export function Dashboard({ initialSettings }: { initialSettings: Settings }) {
   }
 
   return (
-    <div className="min-h-dvh bg-bg pb-16 text-ink">
-      <header className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 pb-2 pt-8 sm:px-6">
+    <div className="min-h-dvh animate-fade-in bg-bg pb-16 text-ink">
+      <Sidebar
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        hasPasscode={settings.hasPasscode}
+        onLockNow={lockNow}
+        onOpenSettings={() => {
+          setSidebarOpen(false);
+          setSettingsOpen(true);
+        }}
+        locking={locking}
+      />
+
+      <header className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 pb-2 pt-8 sm:px-6">
         <div className="flex items-center gap-3">
           <BrandMark size={34} />
           <div>
@@ -210,36 +218,17 @@ export function Dashboard({ initialSettings }: { initialSettings: Settings }) {
             <LiveClock timeZone={timeZone} />
           </div>
         </div>
-        <div className="flex items-center gap-1">
-          {settings.hasPasscode && (
-            <button
-              onClick={lockNow}
-              disabled={locking}
-              aria-label="Lock now"
-              className="rounded-lg p-2 text-ink-muted hover:bg-surface-2 hover:text-ink disabled:opacity-40"
-            >
-              <Lock size={18} />
-            </button>
-          )}
-          <Link
-            href="/manage"
-            aria-label="Manage tasks"
-            className="rounded-lg p-2 text-ink-muted hover:bg-surface-2 hover:text-ink"
-          >
-            <ListChecks size={18} />
-          </Link>
-          <button
-            onClick={() => setSettingsOpen(true)}
-            aria-label="Settings"
-            className="rounded-lg p-2 text-ink-muted hover:bg-surface-2 hover:text-ink"
-          >
-            <SettingsIcon size={18} />
-          </button>
-        </div>
+        <button
+          onClick={() => setSidebarOpen(true)}
+          aria-label="Open menu"
+          className="rounded-lg p-2 text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+        >
+          <Menu size={20} />
+        </button>
       </header>
 
       {error && (
-        <div className="mx-auto max-w-6xl px-4 pt-2 sm:px-6">
+        <div className="mx-auto max-w-6xl animate-fade-in px-4 pt-2 sm:px-6">
           <p className="rounded-lg border border-clay/30 bg-clay/10 px-3 py-2 font-mono text-xs text-clay-strong">
             {error}
           </p>
@@ -279,18 +268,6 @@ export function Dashboard({ initialSettings }: { initialSettings: Settings }) {
         </>
       )}
 
-      <footer className="mx-auto max-w-6xl px-4 pt-10 text-center sm:px-6">
-        <span className="font-mono text-[11px] text-ink-faint">
-          A project by{" "}
-          <a
-            href="https://arnabsaha.vercel.app/"
-            className="underline decoration-dotted underline-offset-4 hover:text-ink-muted"
-          >
-            Arnab Saha
-          </a>
-        </span>
-      </footer>
-
       {settingsOpen && (
         <SettingsSheet
           settings={settings}
@@ -310,8 +287,11 @@ function PausedState({
   onOpenSettings: () => void;
 }) {
   return (
-    <div className="mx-auto flex max-w-6xl flex-col items-center gap-3 px-4 pt-20 text-center sm:px-6">
-      <PauseCircle size={32} className="text-ink-faint" />
+    <div className="mx-auto flex max-w-6xl animate-fade-in flex-col items-center gap-3 px-4 pt-20 text-center sm:px-6">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" className="text-ink-faint">
+        <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.6" />
+        <path d="M10 9v6M14 9v6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      </svg>
       <h2 className="font-mono text-sm uppercase tracking-[0.2em] text-ink-muted">System is paused</h2>
       <p className="max-w-xs font-mono text-xs text-ink-faint">
         {pendingAction === "resume"
@@ -320,7 +300,7 @@ function PausedState({
       </p>
       <button
         onClick={onOpenSettings}
-        className="mt-2 rounded-full border border-border px-4 py-1.5 font-mono text-xs text-ink-muted hover:border-border-strong hover:text-ink"
+        className="mt-2 rounded-full border border-border px-4 py-1.5 font-mono text-xs text-ink-muted transition-all hover:border-border-strong hover:text-ink active:scale-95"
       >
         Open Settings
       </button>

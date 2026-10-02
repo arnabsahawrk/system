@@ -2,75 +2,56 @@
 
 A personal daily-accomplishment tracker. One person, no accounts — the passcode is the only lock.
 
-A project by [Arnab Saha](https://arnabsaha.vercel.app/).
+A project by [Arnab Saha](https://arnabsaha.vercel.app/) — linked from the in-app menu, not the main screen.
 
 ## The rules it enforces
 
-- The **day and the week both flip at 06:00 local time**, not midnight. Friday's tasks stay tickable until Saturday 05:59.
-- A week runs **Saturday 06:00 → next Saturday 06:00** and is numbered automatically (Week 1, 2, …).
-- **Only today's card is unlocked.** Every other day is locked — enforced by the server too (a direct API call gets a 409), not just the UI.
-- **Task changes never touch the running week.** `/manage` edits the template; the template is read exactly once, at the next rollover.
-- Each day can have any number of tasks (0–16), so one day can have 1 and another 8. Reorder with the up/down arrows next to each task.
-- At rollover the finished week is closed and **emailed via Brevo** (unless notifications are off — see below): every task per day (done / missed), totals, percentage, message.
-- **Timezone follows you.** The browser's timezone is saved on each visit (DST is handled by `Intl`), so moving country needs no setting.
-- **Pause** (Settings → System) stops everything — no new weeks, no emails — starting at the *next* reset, not instantly; the week that's already running finishes and is emailed completely normally first. Resume is the same: requested now, takes effect at the next reset, and does not backfill the paused time as extra 0% weeks. Both require re-entering your passcode.
-- **Notifications** (Settings) is a separate on/off switch for the weekly email alone — pausing already implies no email, but you can turn email off without pausing anything else.
+- The **day and the week both flip at 06:00 local time**, not midnight.
+- A week runs **Saturday 06:00 → next Saturday 06:00**, numbered automatically.
+- **Only today's card is unlocked** — enforced server-side too (a direct API call gets a 409).
+- **Task changes never touch the running week** — `/manage` edits the template; only the next rollover reads it. Reorder with the up/down arrows next to each task.
+- At rollover the finished week is **emailed via Brevo** (unless the Weekly email toggle is off): every task, totals, percentage, message.
+- **Timezone follows you**, synced from the browser on every visit.
+- **Pause** (menu → Settings → System) stops everything starting at the *next* reset, never instantly — the week already running finishes and emails normally first. Resume is the same, and does not backfill the paused time as fake 0% weeks. Both ask for your passcode again, in their own field.
+- **Weekly email** is a separate on/off switch, independent of pause.
 
-## What changed from the first draft
+## What changed this round
 
-- **No emoji anywhere** — task names, messages, email — by request, and to keep the free-tier database lean.
-- **Leaner schema**: `week_days` merged into `week_tasks` (one row per task, day/date included directly); `weeks` no longer caches totals/percent (computed on read from the actual task rows, so there's nothing to drift out of sync); `rollover_log` folded into `weeks.emailed_at`.
-- **New messages** (no emoji except 100%) — see `lib/theme.ts`.
-- **Tracker → History / Trend**: paginated 10-at-a-time ("Load 10 more"), a Tasks column, and a footer row of all-time averages computed over every finalized week regardless of how many are loaded on screen.
-- **Settings redesigned**: no more explanatory paragraph for the email address; Change/Remove are inline buttons next to the passcode fields, matching Streakment.
-- Tooltips and visible scrollbars removed site-wide (scrolling itself still works — just no scrollbar track drawn).
-- Footer only links "Arnab Saha", not the whole sentence.
-- Full date + live time-with-seconds in the header (`components/live-clock.tsx`), on its own 1-second timer so the rest of the page doesn't re-render every second.
+- **Chart/Trend removed entirely** — deleted `components/tracker-chart.tsx` and all references. The old History/Trend tabs are gone; what's left is a plain **Records** heading (styled like Everyday/Weekly) followed directly by the table — no tabs.
+- **Navigation moved to a sidebar.** The three header icons are now a single menu button that opens a slide-in drawer: Lock App (only shown when a passcode is set), Manage Tasks, Settings, and the "A project by Arnab Saha" credit at the bottom (only "Arnab Saha" is a link, in the accent green) — removed from the main page entirely, since it now lives in the drawer.
+- **Settings reordered and reworked**: Weekly email first (with a redrawn toggle — see bug below), System/pause second, now with its *own* passcode field instead of borrowing the one from the passcode section, App passcode last.
+- **Smoothness pass**: page content fades in on load, the settings sheet slides/fades in and out instead of popping, buttons give a little press feedback, a wrong passcode now shakes the input instead of just showing red text.
+- **Icons**: see the Windows fix below. Nothing changed about the design itself — same target mark, same colors — only which variant gets used where.
+- **Seed data** now generates **40 historical weeks** (randomized, gently trending) instead of 6, specifically so pagination has enough to page through — the old seed never had enough weeks to make "Load 10 more" appear at all.
 
 ### Bugs found and fixed this round
 
-- **The "stuck on the loading icon" issue you saw locally**: lock/unlock transitions used Next's client-side router (`router.replace`). If that soft navigation ever stalls, the old page is left showing forever with nothing to indicate why — and a stale cookie or dev-server hot-reload state makes that more likely locally than on a fresh Vercel request. Every lock-state transition (tab-lock redirect, a 401 from the API, "Lock now", unlocking) now does a hard `window.location.href` navigation instead — a full request that can't be left half-finished. The loading screen also now has a 9-second timeout with a visible Reload button, so if something *does* go wrong, there's always something to click instead of an unexplained icon.
-- Bumped the database pool from 1 to 3 connections — a single connection plus Next dev's hot reload can, on some machines, leave a request with nothing to wait for indefinitely.
-- **PWA icon "dark corners"**: the icon PNGs had transparent corners outside the rounded shape I'd drawn — the app itself rounded them, and then the phone tried to mask the icon *again* and revealed the transparency underneath. Fixed by generating the home-screen icons from a full-bleed, fully opaque square (`public/icon-source.svg`) with no self-rounding, and adding a proper `maskable` icon to the manifest for Android's adaptive-icon system. The in-app logo and browser-tab favicon keep their rounded look — that part was never the problem.
-- `getCurrentWeek` was returning the last (already-finalized) week's data labeled as "still running" while paused, instead of signaling "paused" — found while testing the new pause feature. Now returns `null` whenever `paused` is true, and the dashboard shows a dedicated paused screen for that.
-- The weekly email had no charset declaration, so emoji and the en-dash rendered as mojibake in some renderers — fixed with an explicit `<meta charset="utf-8">`.
+- **The toggle switch's ball overflowing its track**: the old geometry mixed an odd track width with an arbitrary-value transform or thereabouts and didn't actually guarantee the ball stayed inside at both ends. Rebuilt with round, verified numbers (48×28 track, 20×20 ball, 4px margin on every side in both states) plus `overflow-hidden` on the track as a second line of defense, and confirmed visually in a real browser this time, not just by reading the CSS.
+- **PWA icon square on Windows, rounded on mobile** — this turned out to be correct, documented behavior rather than a bug to patch over: Android and iOS both apply their own rounding/masking to a PWA icon, but Windows applies none at all and just shows the file as-is. The icon file that's full-bleed and un-rounded (right for Android/iOS, since they do the rounding for you) was the exact same file Windows was showing plainly square. Fixed by splitting the manifest's `"any"`-purpose icons (what Windows actually uses) into their own pre-rounded version, while the `"maskable"` icon and the iOS apple-touch-icon stay full-bleed, since those two platforms still need to do their own masking on top.
 
 ## Stack
 
-Next.js 16 (App Router) · React 19 · Tailwind CSS 3.4.19 · Postgres on Neon via the `postgres` package (raw SQL, no ORM — same as Streakment) · Brevo · Roboto Mono, self-hosted. Built to run on old Safari (iPhone 7 / iOS 15): no container queries, no `:has()`, no Tailwind v4.
+Next.js 16 (App Router) · React 19 · Tailwind CSS 3.4.19 · Postgres on Neon via the `postgres` package (raw SQL, no ORM) · Brevo · Roboto Mono, self-hosted. Built for old Safari (iPhone 7 / iOS 15).
 
 ## Run locally
 
 1. `npm install`
-2. Create a Neon project and copy the **pooled** connection string.
-3. `cp .env.example .env.local` and fill it in (below).
-4. Create the tables: paste `schema.sql` into Neon → **SQL Editor** and run it (or `npm run db:init` if you have `psql`). **This is a breaking schema change from the first draft** — if you already ran the old `schema.sql`, drop the old tables first (`drop table if exists weeks, task_templates, week_days, week_day_tasks, rollover_log, user_settings cascade;`) before running the new one.
-5. Optional dummy data for review: `npm run db:seed` — wipes `weeks`/`task_templates` first (leaves your settings/passcode alone), never run it on a database with real history you want to keep.
+2. Create a Neon project, copy the **pooled** connection string.
+3. `cp .env.example .env.local` and fill it in.
+4. Run `schema.sql` against a fresh database (SQL Editor, or `npm run db:init`).
+5. `npm run db:seed` for 40 weeks of sample data to actually see pagination, History averages, etc. — wipes `weeks`/`task_templates` first, leaves your settings alone.
 6. `npm run dev` → http://localhost:3000
-
-Other scripts: `npm run verify:dates` (prints the 6 AM / Saturday boundary cases), `npx tsx scripts/render-email-preview.ts` (writes a sample weekly email to `preview/`).
 
 ## Environment
 
-| Variable | What it is |
-| --- | --- |
-| `DATABASE_URL` | Neon pooled connection string |
-| `BREVO_API_KEY` | Brevo → SMTP & API → API Keys |
-| `BREVO_SENDER_EMAIL` | A sender verified in Brevo (Senders, Domains & Dedicated IPs → Senders). Verifying your own inbox is enough |
-| `BREVO_SENDER_NAME` | Display name, e.g. `System` |
-| `CRON_SECRET` | Any long random string; Vercel sends it as a bearer token to the cron endpoint |
-| `PASSCODE_KEY` | Any long random string; encrypts the passcode so "forgot passcode" can email it back. **Set once, never change** — changing it locks out an existing passcode |
+Same six variables as before — `DATABASE_URL`, `BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, `BREVO_SENDER_NAME`, `CRON_SECRET`, `PASSCODE_KEY`. See `.env.example`.
 
 ## Deploy (GitHub → Vercel Hobby + Neon free)
 
-1. Push this folder to your GitHub repo.
-2. Vercel project settings → Environment Variables → add the six above (they won't carry over automatically from a schema change).
-3. Run the new `schema.sql` against production Neon (see the breaking-change note above if upgrading from the first draft).
-4. Redeploy. `vercel.json` schedules `/api/cron/rollover` daily at 01:00 UTC (07:00 in Bangladesh) — Hobby allows one run per day. This is only a backup: every dashboard load also runs the rollover check, so the data is never wrong even if the cron never fires — it just makes the email arrive close to 6 AM instead of whenever you next open the app.
+Same as before — push, set the six env vars, run `schema.sql` if it's changed, redeploy. `vercel.json` schedules the backup rollover cron daily at 01:00 UTC.
 
 ## Known limits
 
-- If the app isn't paused but also isn't opened for several weeks, each skipped week is recorded as 0% (nothing was ticked) and is **not** emailed — those backfilled weeks use today's task list, since past templates aren't versioned. Pausing avoids this entirely: paused time isn't backfilled at all.
-- Changing timezone mid-week shifts the 6 AM boundary from that moment on.
-- The daily Vercel cron uses a fixed UTC time; in a timezone far from Bangladesh the email can arrive up to a day late (data is still correct).
-- Reordering tasks is up/down buttons, not drag gestures — native HTML5 drag-and-drop doesn't work on touch devices (your iPhone), and a reliable touch-drag implementation was more than I could responsibly test in the time available this round. Happy to build it next if you'd rather have the gesture than the buttons.
+- Reordering tasks is still up/down buttons, not drag gestures (native HTML5 drag doesn't work on touch devices).
+- The Records table scrolls horizontally on narrow screens to show every column — no visible scrollbar by design, but it is a swipe, not something that's obvious at a glance. Worth a follow-up if it's not intuitive in practice.
+- Same cron/timezone/backfill notes as before (see PLAN.md).

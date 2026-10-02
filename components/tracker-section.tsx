@@ -1,10 +1,9 @@
-"use client";
-
-import { useState } from "react";
 import { TrackerTable } from "./tracker-table";
-import { TrackerChart } from "./tracker-chart";
 import type { CurrentWeek, HistoryStats, WeekSummary } from "@/lib/types";
 
+/** No tabs — this used to switch between a table and a chart, but the
+ * chart's been removed entirely by request. Styled the same plain way as
+ * the Everyday/Weekly headings rather than as its own card. */
 export function TrackerSection({
   history,
   stats,
@@ -20,59 +19,25 @@ export function TrackerSection({
   loadingMore: boolean;
   currentWeek: CurrentWeek | null;
 }) {
-  const [tab, setTab] = useState<"history" | "trend">("history");
   const allWeeks: WeekSummary[] = currentWeek
     ? [{ ...currentWeek, finalized: false }, ...history]
     : history;
 
   return (
-    <div className="flex flex-col gap-4 rounded-xl2 border border-border bg-surface p-5 shadow-card">
-      <div className="flex items-center gap-1 font-mono text-xs">
-        <TabButton active={tab === "history"} onClick={() => setTab("history")}>
-          History
-        </TabButton>
-        <TabButton active={tab === "trend"} onClick={() => setTab("trend")}>
-          Trend
-        </TabButton>
+    <div>
+      <h2 className="mb-3 font-mono text-xs uppercase tracking-[0.2em] text-ink-muted">Records</h2>
+      <div className="flex flex-col gap-4 rounded-xl2 border border-border bg-surface p-5 shadow-card">
+        <TrackerTable weeks={allWeeks} stats={stats} />
+        {hasMore && (
+          <button
+            onClick={onLoadMore}
+            disabled={loadingMore}
+            className="self-center rounded-full border border-border px-4 py-1.5 font-mono text-xs text-ink-muted transition-all hover:border-border-strong hover:text-ink active:scale-95 disabled:opacity-50"
+          >
+            {loadingMore ? "Loading…" : "Load 10 more"}
+          </button>
+        )}
       </div>
-
-      {tab === "history" ? (
-        <>
-          <TrackerTable weeks={allWeeks} stats={stats} />
-          {hasMore && (
-            <button
-              onClick={onLoadMore}
-              disabled={loadingMore}
-              className="self-center rounded-full border border-border px-4 py-1.5 font-mono text-xs text-ink-muted hover:border-border-strong hover:text-ink disabled:opacity-50"
-            >
-              {loadingMore ? "Loading…" : "Load 10 more"}
-            </button>
-          )}
-        </>
-      ) : (
-        <TrackerChart weeks={allWeeks} />
-      )}
     </div>
-  );
-}
-
-function TabButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={`rounded-full px-3 py-1.5 uppercase tracking-wider transition-colors ${
-        active ? "bg-accent/15 text-accent" : "text-ink-muted hover:text-ink"
-      }`}
-    >
-      {children}
-    </button>
   );
 }

@@ -1,33 +1,37 @@
 # System — plan and status
 
-Kept in the repo so any future session can resume from files instead of from memory.
+## This round
 
-## Architecture (v2)
+- Deleted the Chart/Trend feature and its file entirely; Tracker is now a tabless "Records" section.
+- Replaced the 3-icon header with `components/sidebar.tsx`, a slide-in drawer (Lock App / Manage Tasks / Settings / credit line).
+- `components/settings-sheet.tsx` reordered (email, system, passcode) and given its own `pausePasscode` field separate from the change-passcode fields; `Switch` rebuilt with verified geometry + `overflow-hidden`.
+- Icon generation split: `public/icon-rounded-source.svg` → the manifest's `"any"`-purpose icons (Windows, no OS masking); `public/icon-source.svg` (full-bleed, unchanged) → `"maskable"` + apple-touch-icon, where the OS does the rounding itself.
+- `scripts/seed.ts`: `HISTORY_PERCENTS` is now a generated 40-length array (gentle random walk) instead of a hardcoded 6-item list.
+- Animation additions: `animate-fade-in` on page-level content, `shake` keyframe on a wrong passcode, `active:scale-95`-style press feedback on buttons, slide/fade transition on the settings sheet open+close.
 
-- **Time model** (`lib/date.ts`): unchanged — every day/week decision is a pure function of `(now, timeZone)` after subtracting 6 hours.
-- **Data** (`schema.sql`): `user_settings` (singleton — now also holds `notifications_enabled`, `paused`, `pending_action`), `task_templates` (the live plan, no emoji), `weeks` (no cached totals), `week_tasks` (one row per task per day, day/date inline — merged from the old week_days + week_day_tasks).
-- **Rollover** (`lib/rollover.ts`): `ensureCurrentWeek(now)` — same catch-up loop as before, now also branching on `paused`/`pending_action` each iteration: pause takes effect (no new week created) the moment the running week's boundary is reached; resume creates exactly one fresh week at the real current boundary, skipping the idle gap rather than backfilling it.
-- **History pagination** (`lib/weeks.ts` `getHistoryPage`): 10 finalized weeks per page, newest-first, `before=<weekNumber>` to page further back; a separate aggregate query computes all-time stats (week count, average tasks/done/percent) over every finalized week regardless of page size.
-- **Lock**: unchanged design (Streakment-style encrypted passcode, server cookie, per-tab sessionStorage, `pagehide` beacon) — now using hard `window.location` navigation instead of the Next router for every lock-state transition, and a `/api/pause` route reusing the same `verifyPasscode` check for the new pause/resume/notifications-adjacent settings.
+## Verified this round — in a real browser, not just by reading code
 
-## Verified this round (sandbox, local Postgres 16)
+Set up Playwright (a real headless Chromium was already available in the sandbox at `/opt/pw-browsers`) and drove the actual built-and-served app:
 
-- `tsc --noEmit`, `eslint .` (0 errors), `next build` all clean.
-- Paginated history: page 1 + `before=` page 2 return correct, non-overlapping weeks; all-time stats match hand totals.
-- Pause: wrong passcode rejected (401); correct passcode accepted; `pendingAction` set without touching the live week; crossing the boundary finalizes+would-email the running week and creates **no** new week; `paused` flips to true.
-- Resume: requested while paused; crossing a boundary creates **exactly one** new week dated at the real current boundary (confirmed via direct DB inspection — no backfilled weeks for the paused gap).
-- Found and fixed mid-testing: `getCurrentWeek` wasn't checking `paused` at all and returned the last finalized week mislabeled as live — now returns `null` and the dashboard shows a dedicated paused screen.
-- PWA icon corner bug reproduced and fixed (transparent corners under a second OS-level mask); new full-bleed + maskable icons generated and visually checked.
+- Dashboard renders with the new hamburger menu; sidebar opens, shows Lock App only once a passcode exists, in the requested order.
+- Settings: toggle geometry confirmed fixed by screenshot (previous fix was logic-only, unverified); section order confirmed; setting a passcode through the real form correctly reveals the dedicated System passcode field and the Change/Remove layout.
+- Unlock page renders correctly end to end: filled the form, submitted, landed back on the dashboard.
+- Records: confirmed Week 41 (live) at the top of 40 seeded weeks, Tasks column before Done, "Load 10 more" visible and — clicked it — correctly appended 10 more rows (21 total), proving pagination works through the real UI, not just the API in isolation.
+
+This is a meaningfully different (stronger) verification bar than earlier rounds, which were mostly `tsc`/`next build`/direct API calls. Worth continuing to use for UI-affecting changes going forward.
+
+### A process mistake worth recording
+
+Partway through this round I ran `tsc`/tests against `next start` without rebuilding first, and spent a few cycles confused by screenshots showing stale UI. `next start` serves whatever `.next/` currently holds — it is not a dev server and does not pick up source changes. Rebuild before every `next start` when verifying a change.
 
 ## Not verified
 
-- Live Brevo send, Neon itself, Vercel deploy/cron — same as before, no key/network for these in the sandbox.
-- The full HTTP-level pause/resume flow through a running server + browser cookies specifically (verified instead via direct calls to the same library functions the routes call — the sandbox's long-running dev server kept getting killed between tool calls partway through this round, so I fell back to the more reliable direct-call test, which exercises identical logic minus the HTTP/cookie layer).
-- The reorder-by-buttons UI and the paginated "Load 10 more" button, in an actual browser.
-- `notifications_enabled = false` actually suppressing a send end-to-end (the gating is a single `if` before the send call — low risk, but not click-tested).
+- Live Brevo send, Neon, Vercel deploy/cron.
+- Pause/resume through the actual UI buttons this round specifically (verified via direct library calls in the previous round; the UI wiring to those same endpoints is straightforward but wasn't re-screenshotted here).
+- The Records table's horizontal scroll on an actual touchscreen (confirmed the container is scrollable in code; a mouse-driven headless browser doesn't really exercise a touch swipe).
 
-## Next
+## Next (unchanged from before, still parked)
 
-1. **True drag-and-drop** for task reordering, if the up/down buttons feel like a downgrade — needs a touch-compatible (Pointer Events, not HTML5 dragstart) implementation, deliberately not attempted this round given the testing constraints above.
-2. **More data views**: yearly heatmap (Streakment-style), streak of weeks ≥ some threshold, best week, per-task consistency across weeks.
-3. Service worker for an offline app shell.
+1. Yearly heatmap, week streaks, best-week stat — discussed in detail, not yet decided/built.
+2. Offline service worker (app-shell only, not offline ticking).
+3. True drag-and-drop for task reordering, if the arrow buttons feel insufficient.

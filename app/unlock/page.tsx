@@ -11,6 +11,7 @@ export default function UnlockPage() {
   const [recovering, setRecovering] = useState(false);
   const [recovered, setRecovered] = useState(false);
   const [misses, setMisses] = useState(0);
+  const [shake, setShake] = useState(false);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -32,6 +33,8 @@ export default function UnlockPage() {
     setErr("Wrong passcode.");
     setPasscode("");
     setMisses((m) => m + 1);
+    setShake(true);
+    setTimeout(() => setShake(false), 350);
   }
 
   async function forgot() {
@@ -48,7 +51,7 @@ export default function UnlockPage() {
   }
 
   return (
-    <main className="flex min-h-dvh flex-col items-center justify-center gap-8 bg-bg px-6 text-ink">
+    <main className="flex min-h-dvh animate-fade-in flex-col items-center justify-center gap-8 bg-bg px-6 text-ink">
       <div className="flex flex-col items-center gap-3">
         <BrandMark size={44} className={busy ? "animate-pulse-soft" : undefined} />
         <div className="text-center">
@@ -57,7 +60,7 @@ export default function UnlockPage() {
         </div>
       </div>
 
-      <form onSubmit={submit} className="w-full max-w-xs">
+      <form onSubmit={submit} className={`w-full max-w-xs ${shake ? "animate-shake" : ""}`}>
         <input
           type="password"
           inputMode="numeric"
@@ -71,7 +74,7 @@ export default function UnlockPage() {
         <button
           type="submit"
           disabled={busy || !passcode}
-          className="mt-4 w-full rounded-lg bg-accent py-3 font-mono text-sm font-semibold text-[#141210] disabled:opacity-40"
+          className="mt-4 w-full rounded-lg bg-accent py-3 font-mono text-sm font-semibold text-[#141210] transition-all active:scale-[0.98] disabled:opacity-40"
         >
           {busy ? "Checking…" : "Unlock"}
         </button>

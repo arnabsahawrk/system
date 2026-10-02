@@ -99,7 +99,7 @@ export function ManageTasks({ hasPasscode }: { hasPasscode: boolean }) {
   }
 
   return (
-    <div className="min-h-dvh bg-bg pb-16 text-ink">
+    <div className="min-h-dvh animate-fade-in bg-bg pb-16 text-ink">
       <header className="mx-auto flex max-w-6xl items-center gap-3 px-4 pb-2 pt-8 sm:px-6">
         <button onClick={() => router.push("/")} className="rounded-lg p-2 text-ink-muted hover:bg-surface-2 hover:text-ink">
           <ArrowLeft size={18} />

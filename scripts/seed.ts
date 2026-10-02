@@ -40,7 +40,22 @@ const TEMPLATE: Record<DayIndex, string[]> = {
   6: ["Work (SWE)", "Journal"],
 };
 
-const HISTORY_PERCENTS = [11, 23, 45, 64, 84, 96];
+// 40 weeks (~ a year of history minus the live one) so pagination (10 per
+// page) actually has something to page through — a short list never
+// showed the "Load more" button at all. A touch of randomness around a
+// gentle upward drift, not a flat line, so History/the averages look like
+// real usage rather than a obviously synthetic staircase.
+const HISTORY_WEEK_COUNT = 40;
+function buildHistoryPercents(): number[] {
+  const out: number[] = [];
+  let base = 35;
+  for (let i = 0; i < HISTORY_WEEK_COUNT; i++) {
+    base = Math.min(97, Math.max(5, base + (Math.random() * 18 - 7)));
+    out.push(Math.round(base));
+  }
+  return out;
+}
+const HISTORY_PERCENTS = buildHistoryPercents();
 
 function addDays(dateKey: string, days: number): string {
   const parts = dateKey.split("-").map(Number);
