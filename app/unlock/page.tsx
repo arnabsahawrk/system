@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
-import { markTabUnlocked } from "@/lib/tab-lock";
 import { BrandMark } from "@/components/brand-mark";
+import { markTabUnlocked } from "@/lib/tab-lock";
+import { useRouter } from "next/navigation";
+import { useState, type FormEvent } from "react";
 
 export default function UnlockPage() {
   const [passcode, setPasscode] = useState("");
@@ -12,6 +13,7 @@ export default function UnlockPage() {
   const [recovered, setRecovered] = useState(false);
   const [misses, setMisses] = useState(0);
   const [shake, setShake] = useState(false);
+  const router = useRouter();
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -26,7 +28,7 @@ export default function UnlockPage() {
       markTabUnlocked();
       // A full navigation, not the client router — this is the one place a
       // stuck soft-navigation would be most confusing to land on.
-      window.location.href = "/";
+      router.push("/");
       return;
     }
     setBusy(false);
