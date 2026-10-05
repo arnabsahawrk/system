@@ -1,5 +1,5 @@
 -- ============================================================
---  SYSTEM — schema (v2)
+--  SYSTEM — schema
 --  A personal daily-accomplishment tracker.
 --
 --  Personal, single-user app. No accounts, no login. Run once
@@ -118,3 +118,37 @@ create index if not exists week_tasks_week_idx on week_tasks(week_id, day_index,
 -- Powers "today's tasks" and the day-lock check (lib/weeks.ts toggleTask)
 -- without needing week_id at all.
 create index if not exists week_tasks_date_idx on week_tasks(date);
+
+-- ------------------------------------------------------------
+--  5. Biometric unlock (WebAuthn): Touch ID, Face ID, Android
+--     fingerprint, Windows Hello. One row per device that has it
+--     switched on, so a lost device can be removed on its own.
+--     It only ever adds a second way past the passcode; the
+--     passcode itself stays and keeps working everywhere.
+--
+--     Already running? Paste just this section into the Neon SQL
+--     editor — every statement is safe to run more than once.
+-- ------------------------------------------------------------
+
+create table if not exists webauthn_credentials (
+  id           text primary key,            -- credential ID, base64url
+  public_key   bytea not null,              -- COSE-encoded public key
+  counter      bigint not null default 0,   -- signature counter (Apple always reports 0)
+  label        text not null,               -- e.g. "iPhone (Safari)"
+  created_at   timestamptz not null default now(),
+  last_used_at timestamptz,
+
+  constraint webauthn_label_len check (char_length(label) between 1 and 60)
+);
+
+-- Challenges are single-use and short-lived, so a captured sign-in
+-- can never be replayed. Rows are deleted as they're used, and any
+-- left over are swept up the next time one is issued.
+create table if not exists webauthn_challenges (
+  challenge  text primary key,              -- base64url
+  kind       text not null,
+  created_at timestamptz not null default now(),
+
+  constraint webauthn_challenge_kind check (kind in ('register', 'unlock'))
+);
+create index if not exists webauthn_challenges_age_idx on webauthn_challenges(created_at);

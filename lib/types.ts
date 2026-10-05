@@ -76,3 +76,11 @@ export interface TaskTemplateItem {
   name: string;
   sortOrder: number;
 }
+
+/** One device that has biometric unlock switched on. */
+export interface BiometricDevice {
+  id: string;
+  label: string;
+  created_at: string;
+  last_used_at: string | null;
+}

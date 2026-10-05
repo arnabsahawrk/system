@@ -65,10 +65,18 @@ const config: Config = {
           "20%, 60%": { transform: "translateX(-6px)" },
           "40%, 80%": { transform: "translateX(6px)" },
         },
+        // Opens a block downward instead of letting it pop in and shove
+        // everything below it. 12rem is comfortably taller than any block
+        // that uses it.
+        unfold: {
+          "0%": { opacity: "0", maxHeight: "0px" },
+          "100%": { opacity: "1", maxHeight: "12rem" },
+        },
       },
       animation: {
         "fade-in": "fade-in 0.25s ease-out",
         shake: "shake 0.35s ease-in-out",
+        unfold: "unfold 0.3s ease-out",
       },
     },
   },

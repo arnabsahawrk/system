@@ -1,6 +1,6 @@
 # System
 
-A personal daily-accomplishment tracker. One person, no accounts — the passcode is the only lock.
+A personal daily-accomplishment tracker. One person, no accounts — the passcode is the only lock, and Touch ID / Face ID can open it for you on a device you've switched it on for.
 
 A project by [Arnab Saha](https://arnabsaha.vercel.app/) — linked from the in-app menu, not the main screen.
 
@@ -29,6 +29,16 @@ All sample-data tooling (`scripts/seed.ts`, `npm run db:seed`) has been removed 
 
 If every task is later deleted back down to zero, the same thing happens in reverse: the week that's already running finishes out and emails normally, and then the system goes idle with the same "nothing set up" screen until a task is added again.
 
+## Biometric unlock
+
+Once a passcode is set, each device can also open the app with Touch ID, Face ID, an Android fingerprint or Windows Hello (menu → Settings → Biometric unlock). It sits on top of the passcode and never replaces it: the server checks a signed answer from the device before it unlocks anything, then sets the same cookie a correct passcode does. The passcode keeps working everywhere, and removing it removes every biometric device too.
+
+- Each device, browser or installed app is switched on separately and listed in Settings, so a lost phone can be removed from any other device. New devices can only be added from inside the app, once unlocked.
+- Safari only shows the prompt in answer to a tap, so on iPhone the lock screen has a button rather than opening it by itself. Needs iOS 14 or newer.
+- A device's fingerprint or face is checked by the device. Anyone whose fingerprint or face is saved on it, or who knows its own passcode, can pass that check.
+- It is tied to the exact web address the app is served from; if the domain changes, switch it on again.
+- Code: `lib/webauthn.ts` and `app/api/webauthn/route.ts` (server), `lib/biometric.ts` (browser), `components/biometric-settings.tsx` and `app/unlock/page.tsx` (screens).
+
 ## Stack
 
 Next.js 16 (App Router) · React 19 · Tailwind CSS 3.4.19 · Postgres on Neon via the `postgres` package (raw SQL, no ORM) · Brevo · Roboto Mono, self-hosted. Built for old Safari (iPhone 7 / iOS 15).
@@ -49,7 +59,7 @@ Six variables — `DATABASE_URL`, `BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, `BREVO_
 
 ## Deploy (GitHub → Vercel Hobby + Neon free)
 
-Push, set the six env vars, run `schema.sql`, redeploy. `vercel.json` schedules the backup rollover cron daily at 01:00 UTC — the dashboard itself also runs the same rollover check on every load, so the data is never wrong even if the cron never fires; the cron only makes the email arrive close to 6 AM instead of whenever the app is next opened.
+Push, set the six env vars, run `schema.sql`, redeploy. Already running before biometric unlock existed? Run just section 5 of `schema.sql` in the Neon SQL editor; every statement in it is safe to repeat. `vercel.json` schedules the backup rollover cron daily at 01:00 UTC — the dashboard itself also runs the same rollover check on every load, so the data is never wrong even if the cron never fires; the cron only makes the email arrive close to 6 AM instead of whenever the app is next opened.
 
 ## Known limits
 

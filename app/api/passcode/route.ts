@@ -1,16 +1,14 @@
 import { NextResponse } from "next/server";
 import sql from "@/lib/db";
-import { decryptPasscode, encryptPasscode, isUnlocked, PASSCODE_COOKIE } from "@/lib/session";
+import {
+  decryptPasscode,
+  encryptPasscode,
+  isUnlocked,
+  PASSCODE_COOKIE,
+  UNLOCK_COOKIE_OPTS as COOKIE_OPTS,
+} from "@/lib/session";
+import { removeAllCredentials } from "@/lib/webauthn";
 import { sendEmail } from "@/lib/email";
-
-const COOKIE_OPTS = {
-  httpOnly: true,
-  // Safari won't store Secure cookies over plain http://localhost, so only
-  // require it in production (Vercel is always https).
-  secure: process.env.NODE_ENV === "production",
-  sameSite: "lax" as const,
-  path: "/",
-};
 
 /**
  * The only lock in the app — no accounts, no sign-in. The passcode is
@@ -21,6 +19,9 @@ const COOKIE_OPTS = {
  * "unlock" and "recover" are the only actions allowed while locked — every
  * other action requires already being unlocked, so a passcode can never be
  * changed, removed, or read by someone who doesn't already have it.
+ *
+ * Biometric unlock (Touch ID / Face ID, see /api/webauthn) is a second way
+ * to end up with the same cookie; it never replaces any of this.
  */
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
@@ -115,6 +116,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "That passcode isn't right" }, { status: 401 });
     }
     await sql`update user_settings set passcode_enc = null, updated_at = now() where singleton = true`;
+    // Biometric unlock only exists on top of a passcode, so it goes with it.
+    await removeAllCredentials();
     const res = NextResponse.json({ ok: true });
     res.cookies.delete(PASSCODE_COOKIE);
     return res;

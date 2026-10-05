@@ -4,6 +4,17 @@ import sql from "@/lib/db";
 
 export const PASSCODE_COOKIE = "sys_unlocked";
 
+/** Cookie options for the unlock cookie. Shared by every way of getting in
+ * (the passcode and biometrics), so the two can never drift apart. */
+export const UNLOCK_COOKIE_OPTS = {
+  httpOnly: true,
+  // Safari won't store Secure cookies over plain http://localhost, so only
+  // require it in production (Vercel is always https).
+  secure: process.env.NODE_ENV === "production",
+  sameSite: "lax" as const,
+  path: "/",
+};
+
 export interface Settings {
   timezone: string;
   notifyEmail: string;
