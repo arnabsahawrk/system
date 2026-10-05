@@ -13,7 +13,6 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "db:init": "psql \"$DATABASE_URL\" -f schema.sql",
-    "db:seed": "tsx scripts/seed.ts",
     "verify:dates": "tsx scripts/verify-date-logic.ts"
   },
   "dependencies": {

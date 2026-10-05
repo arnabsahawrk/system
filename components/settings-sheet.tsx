@@ -122,7 +122,9 @@ export function SettingsSheet({
   const pauseLabel = settings.paused
     ? settings.pendingAction === "resume"
       ? "Resuming at next reset"
-      : "Paused"
+      : settings.pauseReason === "no_tasks"
+        ? "Paused — no tasks set"
+        : "Paused"
     : settings.pendingAction === "pause"
       ? "Pausing at next reset"
       : "Running";

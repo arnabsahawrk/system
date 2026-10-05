@@ -1,9 +1,11 @@
 import { BrandMark } from "./brand-mark";
 import { DayRing } from "./day-ring";
-import { getProgressColor, getProgressMessage } from "@/lib/theme";
+import { getProgressColor } from "@/lib/theme";
 import { DAY_SHORT_LABELS } from "@/lib/types";
 import type { CurrentWeek } from "@/lib/types";
 
+/** Deliberately no message here — the live, still-running week isn't a
+ * verdict yet. Messages only appear in Records, once a week is done. */
 export function WeeklySummaryCard({
   week,
   todayIndex,
@@ -12,7 +14,6 @@ export function WeeklySummaryCard({
   todayIndex: number;
 }) {
   const color = getProgressColor(week.percent);
-  const message = getProgressMessage(week.percent);
 
   return (
     <div className="flex flex-col gap-5 rounded-xl2 border border-border bg-surface p-5 shadow-card">
@@ -28,18 +29,12 @@ export function WeeklySummaryCard({
         </div>
       </div>
 
-      <div className="flex flex-col items-center gap-2 py-2">
-        <div className="font-mono text-5xl font-bold" style={{ color }}>
+      <div className="flex flex-col items-center gap-2 py-4">
+        <div className="font-mono text-6xl font-bold" style={{ color }}>
           {week.percent}%
         </div>
         <div className="text-xs text-ink-muted">
           {week.completed} of {week.total} goals completed
-        </div>
-        <div
-          className="mt-1 rounded-full px-3 py-1 text-xs font-medium text-[#111]"
-          style={{ backgroundColor: color }}
-        >
-          {message}
         </div>
       </div>
 

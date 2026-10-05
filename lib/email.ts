@@ -66,7 +66,7 @@ export function renderWeeklySummaryEmail(week: FinishedWeekData): {
             <div style="font-family:'Courier New',monospace;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:#8a8a8a;margin-bottom:4px;">
               ${DAY_LABELS[day.dayIndex]} &middot; ${formatDateLabel(day.dateKey)} &middot; ${doneCount}/${day.tasks.length}
             </div>
-            <div>${taskList || '<span style="font-size:13px;color:#b3b3b3;">No tasks this day</span>'}</div>
+            <div>${taskList || '<span style="font-size:13px;color:#b3b3b3;">Rest day — no tasks set</span>'}</div>
           </td>
         </tr>`;
     })
@@ -81,7 +81,7 @@ export function renderWeeklySummaryEmail(week: FinishedWeekData): {
       const taskBits = day.tasks.map((t) => `${t.completed ? "[x]" : "[ ]"} ${t.name}`).join("  ");
       return `${DAY_LABELS[day.dayIndex]} (${formatDateLabel(day.dateKey)}) \u2014 ${doneCount}/${
         day.tasks.length
-      }: ${taskBits || "no tasks"}`;
+      }: ${taskBits || "rest day — no tasks set"}`;
     }),
     "",
     "A project by Arnab Saha \u2014 https://arnabsaha.vercel.app/",

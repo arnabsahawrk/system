@@ -36,6 +36,17 @@ create table if not exists user_settings (
   -- pending intent; nothing actually changes until a boundary arrives.
   paused                 boolean not null default false,
   pending_action         text check (pending_action in ('pause', 'resume')),
+  -- Why `paused` is true: 'manual' only clears via an explicit resume
+  -- (passcode required, see /api/pause); 'no_tasks' clears itself the next
+  -- time a boundary is reached and at least one task template exists — no
+  -- action needed beyond adding a task back in /manage. Emptying the task
+  -- list to 0 for a whole week is what sets 'no_tasks' automatically.
+  pause_reason           text check (pause_reason in ('manual', 'no_tasks')),
+  -- Set once, the first time ever a task is added while no week has ever
+  -- existed — the Saturday the very first week is allowed to start on, so
+  -- adding a task mid-week can never backdate week 1 into a week that's
+  -- partly already gone. Cleared once that first week is actually created.
+  pending_start_date     date,
   updated_at             timestamptz not null default now()
 );
 

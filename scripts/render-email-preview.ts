@@ -5,9 +5,9 @@ const sample = renderWeeklySummaryEmail({
   weekNumber: 7,
   startDateKey: "2026-09-19",
   endDateKey: "2026-09-25",
-  completed: 22,
-  total: 27,
-  percent: 81,
+  completed: 21,
+  total: 25,
+  percent: 84,
   days: [
     {
       dayIndex: 0,
@@ -73,10 +73,7 @@ const sample = renderWeeklySummaryEmail({
     {
       dayIndex: 6,
       dateKey: "2026-09-25",
-      tasks: [
-        { id: "26", name: "Work (SWE)", completed: true },
-        { id: "27", name: "Journal", completed: false },
-      ],
+      tasks: [], // a rest day — demonstrates the "Rest day" wording for an empty day
     },
   ],
 });

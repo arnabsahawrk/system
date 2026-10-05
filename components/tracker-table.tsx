@@ -1,12 +1,18 @@
 import { DayRing } from "./day-ring";
-import { getProgressMessage, getProgressTint } from "@/lib/theme";
+import { getProgressColor, getProgressMessage, getProgressTint } from "@/lib/theme";
 import type { HistoryStats, WeekSummary } from "@/lib/types";
 
-/** "History" tab: one row per finalized week, newest first, plus the
- * current (still-running) week pinned at the top. The footer row's
- * averages are computed server-side over *every* finalized week (see
- * lib/weeks.ts getHistoryPage), not just whatever page happens to be
- * loaded — so they stay meaningful as more weeks load in. */
+// Sampled across the same red->green scale every row uses, so the legend
+// is a literal key to the table's own colors rather than a separate scale.
+const LEGEND_STOPS = [0, 17, 33, 50, 67, 83, 100];
+
+/** "Records": one row per finalized week, newest first, plus the current
+ * (still-running) week pinned at the top. The footer row's averages are
+ * computed server-side over *every* finalized week (see lib/weeks.ts
+ * getHistoryPage), not just whatever page happens to be loaded — so they
+ * stay meaningful as more weeks load in. The Message column's footer is a
+ * small heatmap-style legend instead of another average, since "message"
+ * has no number to average. */
 export function TrackerTable({
   weeks,
   stats,
@@ -57,7 +63,19 @@ export function TrackerTable({
             <td className="py-2 pr-3">avg {stats.avgTotal}</td>
             <td className="py-2 pr-3">avg {stats.avgCompleted}</td>
             <td className="py-2 pr-3">avg {stats.avgPercent}%</td>
-            <td className="py-2" />
+            <td className="py-2">
+              <div className="flex items-center gap-1">
+                <span className="mr-0.5">Less</span>
+                {LEGEND_STOPS.map((p) => (
+                  <span
+                    key={p}
+                    className="h-2.5 w-2.5 rounded-[2px]"
+                    style={{ backgroundColor: getProgressColor(p) }}
+                  />
+                ))}
+                <span className="ml-0.5">More</span>
+              </div>
+            </td>
           </tr>
         </tfoot>
       </table>

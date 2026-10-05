@@ -6,9 +6,10 @@ import { Lock, ListChecks, Settings as SettingsIcon, X } from "lucide-react";
 import { BrandMark } from "./brand-mark";
 
 /**
- * Slide-in drawer, same component at every screen width — simpler and more
- * consistent than maintaining a separate persistent desktop rail, and this
- * is a personal app mostly opened on one phone anyway.
+ * Slide-in drawer from the right, same component at every screen width —
+ * simpler and more consistent than maintaining a separate persistent
+ * desktop rail, and this is a personal app mostly opened on one phone
+ * anyway.
  */
 export function Sidebar({
   open,
@@ -42,8 +43,8 @@ export function Sidebar({
         }`}
       />
       <aside
-        className={`fixed inset-y-0 left-0 z-50 flex w-[260px] flex-col border-r border-border bg-surface transition-transform duration-300 ease-out ${
-          open ? "translate-x-0" : "-translate-x-full"
+        className={`fixed inset-y-0 right-0 z-50 flex w-[260px] flex-col border-l border-border bg-surface transition-transform duration-300 ease-out ${
+          open ? "translate-x-0" : "translate-x-full"
         }`}
         aria-hidden={!open}
       >
@@ -69,12 +70,12 @@ export function Sidebar({
           <SidebarItem icon={<SettingsIcon size={17} />} label="Settings" onClick={onOpenSettings} />
         </nav>
 
-        <div className="mt-auto px-4 pb-6 pt-4">
+        <div className="mt-auto border-t border-border px-4 pb-6 pt-4 text-center">
           <span className="font-mono text-[11px] text-ink-faint">
             A project by{" "}
             <a
               href="https://arnabsaha.vercel.app/"
-              className="text-accent underline decoration-dotted underline-offset-4 transition-colors hover:text-accent-strong"
+              className="text-accent-strong no-underline decoration-dotted underline-offset-4 hover:underline"
             >
               Arnab Saha
             </a>

@@ -9,7 +9,14 @@ export const metadata: Metadata = {
   description: "A personal daily-accomplishment tracker.",
   manifest: "/manifest.json",
   icons: {
-    icon: "/favicon.svg",
+    // SVG first for browsers that support it; the PNG is a real fallback,
+    // not just belt-and-suspenders — older Safari (the iPhone 7 this app
+    // targets) has patchy SVG-favicon support and would otherwise show no
+    // favicon at all.
+    icon: [
+      { url: "/favicon.svg", type: "image/svg+xml" },
+      { url: "/icons/favicon-32.png", type: "image/png", sizes: "32x32" },
+    ],
     apple: "/icons/apple-touch-icon.png",
   },
   appleWebApp: {

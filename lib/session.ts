@@ -11,6 +11,11 @@ export interface Settings {
   notificationsEnabled: boolean;
   paused: boolean;
   pendingAction: "pause" | "resume" | null;
+  /** Why paused is true — see schema.sql for the resume-semantics this drives. */
+  pauseReason: "manual" | "no_tasks" | null;
+  /** Set once a task exists but week 1 hasn't started yet — the Saturday
+   * it's allowed to begin on. Null once the system has ever had a week. */
+  pendingStartDate: string | null;
 }
 
 /** The passcode is encrypted, not hashed — "forgot passcode" recovers it
@@ -45,6 +50,8 @@ interface SettingsRow {
   notifications_enabled: boolean;
   paused: boolean;
   pending_action: "pause" | "resume" | null;
+  pause_reason: "manual" | "no_tasks" | null;
+  pending_start_date: string | null;
 }
 
 /** Reads the one settings row, creating it on first access. Personal
@@ -53,7 +60,7 @@ export async function getSettings(): Promise<Settings> {
   const [row] = await sql<SettingsRow[]>`
     insert into user_settings (singleton) values (true)
     on conflict (singleton) do update set updated_at = user_settings.updated_at
-    returning timezone, notify_email, passcode_enc, notifications_enabled, paused, pending_action
+    returning timezone, notify_email, passcode_enc, notifications_enabled, paused, pending_action, pause_reason, pending_start_date
   `;
   return {
     timezone: row?.timezone ?? "Asia/Dhaka",
@@ -62,6 +69,8 @@ export async function getSettings(): Promise<Settings> {
     notificationsEnabled: row?.notifications_enabled ?? true,
     paused: row?.paused ?? false,
     pendingAction: row?.pending_action ?? null,
+    pauseReason: row?.pause_reason ?? null,
+    pendingStartDate: row?.pending_start_date ?? null,
   };
 }
 

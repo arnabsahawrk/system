@@ -1,5 +1,5 @@
-import type { CurrentWeek, HistoryStats, WeekSummary } from "@/lib/types";
 import { TrackerTable } from "./tracker-table";
+import type { CurrentWeek, HistoryStats, WeekSummary } from "@/lib/types";
 
 /** No tabs — this used to switch between a table and a chart, but the
  * chart's been removed entirely by request. Styled the same plain way as

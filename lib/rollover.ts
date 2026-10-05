@@ -41,6 +41,8 @@ interface Settings {
   notifications_enabled: boolean;
   paused: boolean;
   pending_action: "pause" | "resume" | null;
+  pause_reason: "manual" | "no_tasks" | null;
+  pending_start_date: string | null;
 }
 
 /** Snapshots the live task_templates into week_tasks for a newly created
@@ -146,7 +148,7 @@ async function claimAndEmail(weekId: string, notifyEmail: string): Promise<void>
  */
 export async function ensureCurrentWeek(now: Date): Promise<void> {
   const [settingsRow] = await sql<Settings[]>`
-    select timezone, notify_email, notifications_enabled, paused, pending_action
+    select timezone, notify_email, notifications_enabled, paused, pending_action, pause_reason, pending_start_date
     from user_settings where singleton = true
   `;
   const settings: Settings = settingsRow ?? {
@@ -155,6 +157,8 @@ export async function ensureCurrentWeek(now: Date): Promise<void> {
     notifications_enabled: true,
     paused: false,
     pending_action: null,
+    pause_reason: null,
+    pending_start_date: null,
   };
 
   const targetWeekStart = getAppWeekStartDateKey(now, settings.timezone);
@@ -165,26 +169,67 @@ export async function ensureCurrentWeek(now: Date): Promise<void> {
       select id, week_number, start_date from weeks order by week_number desc limit 1 for update
     `;
 
+    let current: WeekRow;
+
     if (!latest) {
       if (settings.paused) return; // paused before ever starting — nothing to do
-      await createWeek(tx, 1, targetWeekStart);
-      return;
+
+      // Brand new system: no week ever existed. Don't start anything until
+      // there's at least one task to track — an auto-created empty week 1
+      // would just be a week of nothing, and would eat the "Week 1" label
+      // before any real tracking happened.
+      const [row] = await tx<{ count: number }[]>`select count(*)::int as count from task_templates`;
+      if ((row?.count ?? 0) === 0) return;
+
+      // At least one task exists now. The earliest this is allowed to
+      // start is the *next* boundary, never the one already under way —
+      // adding a task on a Wednesday must not retroactively start week 1
+      // on the Saturday that's already partly gone.
+      let pendingStart = settings.pending_start_date;
+      if (!pendingStart) {
+        pendingStart = addDaysToDateKey(getAppWeekStartDateKey(now, settings.timezone), 7);
+        await tx`update user_settings set pending_start_date = ${pendingStart}, updated_at = now() where singleton = true`;
+      }
+      if (targetWeekStart < pendingStart) return; // the boundary hasn't arrived yet
+
+      const newId = await createWeek(tx, 1, pendingStart);
+      await tx`update user_settings set pending_start_date = null, updated_at = now() where singleton = true`;
+      current = { id: newId, week_number: 1, start_date: pendingStart };
+    } else {
+      current = latest;
     }
 
-    let current = latest;
     let iterations = 0;
     while (current.start_date < targetWeekStart) {
       // Safety valve: only trips if something upstream is badly wrong
       // (e.g. a corrupted start_date), never in ordinary use.
       if (++iterations > 5000) throw new Error("ensureCurrentWeek: runaway loop, aborting");
 
+      const [tplRow] = await tx<{ count: number }[]>`select count(*)::int as count from task_templates`;
+      const hasTasks = (tplRow?.count ?? 0) > 0;
+
       if (settings.paused) {
-        if (settings.pending_action === "resume") {
-          const newId = await createWeek(tx, current.week_number + 1, targetWeekStart);
-          await tx`update user_settings set paused = false, pending_action = null, updated_at = now() where singleton = true`;
-          current = { id: newId, week_number: current.week_number + 1, start_date: targetWeekStart };
+        const manualResumeRequested = settings.pending_action === "resume";
+
+        if (manualResumeRequested && !hasTasks) {
+          // Asked to resume, but there's still nothing to track — can't
+          // start a week with zero tasks. Drop the request rather than
+          // leave it pending forever, and reclassify as "no_tasks" so it
+          // picks back up on its own the moment a task is added, with no
+          // further passcode/manual step needed.
+          await tx`update user_settings set pending_action = null, pause_reason = 'no_tasks', updated_at = now() where singleton = true`;
+          settings.pending_action = null;
+          settings.pause_reason = "no_tasks";
+          break;
         }
-        break; // idle (or just resumed straight to "now") — nothing more to walk through
+
+        const shouldResume = (manualResumeRequested && hasTasks) || (settings.pause_reason === "no_tasks" && hasTasks);
+        if (!shouldResume) break; // staying idle
+
+        const newId = await createWeek(tx, current.week_number + 1, targetWeekStart);
+        await tx`update user_settings set paused = false, pending_action = null, pause_reason = null, updated_at = now() where singleton = true`;
+        current = { id: newId, week_number: current.week_number + 1, start_date: targetWeekStart };
+        continue; // re-check the while condition — may already be caught up
       }
 
       // Not paused: the week that's running finishes completely normally,
@@ -193,8 +238,11 @@ export async function ensureCurrentWeek(now: Date): Promise<void> {
       const endedAt = new Date(Date.UTC(...parseDateKeyTuple(current.start_date)) + WEEK_MS);
       if (now.getTime() - endedAt.getTime() <= EMAIL_FRESHNESS_MS) toEmail.push(current.id);
 
-      if (settings.pending_action === "pause") {
-        await tx`update user_settings set paused = true, pending_action = null, updated_at = now() where singleton = true`;
+      if (settings.pending_action === "pause" || !hasTasks) {
+        const reason = settings.pending_action === "pause" ? "manual" : "no_tasks";
+        await tx`update user_settings set paused = true, pending_action = null, pause_reason = ${reason}, updated_at = now() where singleton = true`;
+        settings.paused = true;
+        settings.pause_reason = reason;
         break; // this is the boundary pausing takes effect at — stop here
       }
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { Menu } from "lucide-react";
 import { BrandMark } from "./brand-mark";
 import { DayCard } from "./day-card";
@@ -33,6 +34,11 @@ export function Dashboard({ initialSettings }: { initialSettings: Settings }) {
   const [now, setNow] = useState(() => new Date());
   const lastAppDate = useRef<string | null>(null);
 
+  // /api/week/current is the one call that actually runs the rollover
+  // check (ensureCurrentWeek), which can change settings as a side effect
+  // — pendingStartDate getting computed, or paused/pauseReason flipping
+  // automatically. Re-reading settings right after is what keeps e.g. the
+  // "Week 1 starts <date>" message from showing stale data.
   const loadWeek = useCallback(async () => {
     const res = await fetch("/api/week/current");
     if (res.status === 401) {
@@ -40,6 +46,8 @@ export function Dashboard({ initialSettings }: { initialSettings: Settings }) {
       return;
     }
     if (res.ok) setWeek(await res.json());
+    const settingsRes = await fetch("/api/settings");
+    if (settingsRes.ok) setSettings(await settingsRes.json());
   }, []);
 
   const loadHistory = useCallback(async () => {
@@ -236,7 +244,18 @@ export function Dashboard({ initialSettings }: { initialSettings: Settings }) {
       )}
 
       {week === null ? (
-        <PausedState pendingAction={settings.pendingAction} onOpenSettings={() => setSettingsOpen(true)} />
+        settings.paused && settings.pauseReason === "manual" ? (
+          <PausedState pendingAction={settings.pendingAction} onOpenSettings={() => setSettingsOpen(true)} />
+        ) : (
+          // Same screen whether this is the very first week ever (never
+          // started) or an existing system that ran out of tasks to track
+          // — both boil down to "nothing to do until a task exists."
+          <NotStartedState
+            pendingStartDate={settings.pendingStartDate}
+            previouslyRan={settings.pauseReason === "no_tasks"}
+            timeZone={timeZone}
+          />
+        )
       ) : (
         <>
           <main className="mx-auto flex max-w-6xl flex-col gap-6 px-4 pt-4 sm:px-6 lg:flex-row lg:items-start">
@@ -275,6 +294,56 @@ export function Dashboard({ initialSettings }: { initialSettings: Settings }) {
           onSettingsChanged={(patch) => setSettings((s) => ({ ...s, ...patch }))}
         />
       )}
+    </div>
+  );
+}
+
+function NotStartedState({
+  pendingStartDate,
+  previouslyRan,
+  timeZone,
+}: {
+  pendingStartDate: string | null;
+  previouslyRan: boolean;
+  timeZone: string;
+}) {
+  const formatted = pendingStartDate
+    ? (() => {
+        const [y, m, d] = pendingStartDate.split("-").map(Number);
+        return new Date(Date.UTC(y!, m! - 1, d!)).toLocaleDateString("en-US", {
+          timeZone: "UTC",
+          weekday: "long",
+          month: "long",
+          day: "numeric",
+        });
+      })()
+    : null;
+
+  const heading = formatted
+    ? previouslyRan
+      ? "Starting back up"
+      : "Week 1 is coming up"
+    : previouslyRan
+      ? "No tasks are set"
+      : "Nothing set up yet";
+
+  const body = formatted
+    ? `A task is set — tracking ${previouslyRan ? "resumes" : "starts"} ${formatted} at 06:00 (${timeZone}). Add or adjust tasks any time before then.`
+    : previouslyRan
+      ? "Every task was removed, so there's nothing to track right now. Add one in Manage Tasks and it picks back up at the next reset (Saturday 06:00) — no other step needed."
+      : "Add your first tasks in Manage Tasks. Week 1 starts the next time the clock hits Saturday 06:00 after that.";
+
+  return (
+    <div className="mx-auto flex max-w-6xl animate-fade-in flex-col items-center gap-3 px-4 pt-20 text-center sm:px-6">
+      <BrandMark size={32} className="opacity-60" />
+      <h2 className="font-mono text-sm uppercase tracking-[0.2em] text-ink-muted">{heading}</h2>
+      <p className="max-w-xs font-mono text-xs text-ink-faint">{body}</p>
+      <Link
+        href="/manage"
+        className="mt-2 rounded-full border border-border px-4 py-1.5 font-mono text-xs text-ink-muted transition-all hover:border-border-strong hover:text-ink active:scale-95"
+      >
+        Manage tasks
+      </Link>
     </div>
   );
 }

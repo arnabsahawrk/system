@@ -13,12 +13,12 @@ export interface ProgressBand {
 }
 
 export const PROGRESS_BANDS: ProgressBand[] = [
-  { min: 0, max: 19, message: "Not enough, time to lock in" },
-  { min: 20, max: 39, message: "Keep pushing, there's more left" },
-  { min: 40, max: 59, message: "Decent, now raise the bar" },
-  { min: 60, max: 79, message: "That's some serious progress, keep going" },
-  { min: 80, max: 89, message: "That's impressive, don't slow down" },
-  { min: 90, max: 99, message: "You're right there, finish strong" },
+  { min: 0, max: 19, message: "Let's do better next week" },
+  { min: 20, max: 39, message: "A promising week" },
+  { min: 40, max: 59, message: "A solid week" },
+  { min: 60, max: 79, message: "A very good week" },
+  { min: 80, max: 89, message: "An excellent week" },
+  { min: 90, max: 99, message: "An exceptional week" },
   { min: 100, max: 100, message: "Holy moly \u{1F631}" },
 ];
 
@@ -34,15 +34,15 @@ function clampPercent(p: number): number {
   return Math.min(100, Math.max(0, Math.round(p)));
 }
 
-// Color stops the percentage is interpolated across: brick -> clay -> sage,
-// with 100% popping into a warm, richer clay as a small reward — distinct
-// from the sage arc rather than just "more green".
+// Red at 0%, green at 100% — a plain traffic-light read (can't complete it
+// = red signal, fully complete = green signal) — with clay and olive as
+// the in-between stops, keeping the app's existing earthy palette rather
+// than a stock red-yellow-green.
 const COLOR_STOPS: { stop: number; rgb: [number, number, number] }[] = [
   { stop: 0, rgb: [156, 74, 60] }, // brick red
-  { stop: 40, rgb: [193, 122, 78] }, // clay
-  { stop: 70, rgb: [166, 150, 74] }, // olive
-  { stop: 99, rgb: [124, 148, 104] }, // sage
-  { stop: 100, rgb: [214, 154, 92] }, // warm clay-gold
+  { stop: 33, rgb: [196, 120, 68] }, // clay / orange
+  { stop: 66, rgb: [180, 168, 70] }, // olive
+  { stop: 100, rgb: [107, 142, 80] }, // sage green
 ];
 
 /** Returns a "rgb(r, g, b)" string for the given percent, 0–100. */
