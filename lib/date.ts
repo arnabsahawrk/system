@@ -134,6 +134,27 @@ export function getWeekDateKeys(weekStartDateKey: string): WeekDateKeys {
   ) as WeekDateKeys;
 }
 
+/** `dateKey` shifted by a whole number of calendar days (negative = earlier). */
+export function addDaysToDateKey(dateKey: string, days: number): string {
+  const { year, month, day } = parseDateKey(dateKey);
+  return toDateKey(new Date(Date.UTC(year, month - 1, day) + days * 86400000));
+}
+
+/** Whole calendar days from `fromKey` to `toKey` (positive when `toKey` is later). */
+export function diffDateKeys(fromKey: string, toKey: string): number {
+  const a = parseDateKey(fromKey);
+  const b = parseDateKey(toKey);
+  return Math.round(
+    (Date.UTC(b.year, b.month - 1, b.day) - Date.UTC(a.year, a.month - 1, a.day)) / 86400000
+  );
+}
+
+/** Minutes since local midnight (0-1439) of `date` as seen in `timeZone`. */
+export function getLocalMinutesOfDay(date: Date, timeZone: string): number {
+  const p = getZonedParts(date, timeZone);
+  return p.hour * 60 + p.minute;
+}
+
 /** True if `dateKey` is the one unlocked day, given the current moment. */
 export function isUnlockedDate(dateKey: string, now: Date, timeZone: string): boolean {
   return dateKey === getAppDateKey(now, timeZone);

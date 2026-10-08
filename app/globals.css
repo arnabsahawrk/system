@@ -53,3 +53,112 @@ input {
 .animate-pulse-soft {
   animation: pulse-soft 1.6s ease-in-out infinite;
 }
+
+/* ------------------------------------------------------------------ *
+ * Task checkbox: a real <input type="checkbox"> (so keyboards, screen
+ * readers and the label tap target all keep working) visually replaced by a
+ * drawn box. The check mark is stroked in, the box pops, and the task name
+ * is struck through by a line that sweeps across — all transform/opacity or
+ * cheap paint, nothing that janks an iPhone 7.
+ * ------------------------------------------------------------------ */
+@layer components {
+  .task-row {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  .tick-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: 0;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .tick-box {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 7px;
+    border: 1.5px solid rgba(255, 255, 255, 0.24);
+    background-color: rgba(255, 255, 255, 0.03);
+    transition:
+      background-color 0.22s ease,
+      border-color 0.22s ease,
+      transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .tick-box svg {
+    width: 14px;
+    height: 14px;
+  }
+  .tick-path {
+    stroke-dasharray: 22;
+    stroke-dashoffset: 22;
+    transition: stroke-dashoffset 0.24s cubic-bezier(0.4, 0, 0.2, 1) 0.05s;
+  }
+  .tick-box[data-checked="true"] {
+    background-color: #7c9468;
+    border-color: #7c9468;
+  }
+  .tick-box[data-checked="true"] .tick-path {
+    stroke-dashoffset: 0;
+  }
+  .tick-box[data-locked="true"] {
+    opacity: 0.55;
+  }
+  .tick-box[data-pop="true"] {
+    animation: pop 0.34s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .tick-input:focus-visible + .tick-box {
+    box-shadow: 0 0 0 3px rgba(162, 189, 134, 0.45);
+  }
+  .task-row:active .tick-box[data-locked="false"] {
+    transform: scale(0.86);
+  }
+
+  /* The strike-through is a background line whose width animates 0 -> 100%.
+   * box-decoration-break: clone gives every wrapped line its own sweep. */
+  .task-text {
+    background-image: linear-gradient(currentColor, currentColor);
+    background-repeat: no-repeat;
+    background-position: 0 58%;
+    background-size: 0% 1.5px;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+    transition:
+      background-size 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+      color 0.25s ease;
+  }
+  .task-text[data-checked="true"] {
+    background-size: 100% 1.5px;
+  }
+
+  /* Placeholder block for the loading skeleton. */
+  .skeleton {
+    background-color: rgba(255, 255, 255, 0.06);
+    border-radius: 0.5rem;
+    animation: pulse-soft 1.6s ease-in-out infinite;
+  }
+}
+
+/* People who ask their device for less motion get it everywhere: animations
+ * and transitions collapse to (effectively) instant, and the confetti engine
+ * checks the same preference before it draws anything. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -1,13 +1,38 @@
 import { renderWeeklySummaryEmail } from "../lib/email";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 
 const sample = renderWeeklySummaryEmail({
   weekNumber: 7,
   startDateKey: "2026-09-19",
   endDateKey: "2026-09-25",
-  completed: 21,
+  completed: 22,
   total: 25,
-  percent: 84,
+  percent: 88,
+  // How the week compares with the ones around it — made-up numbers, purely to
+  // render the extra rows (change vs last week, streak, day strip, weakest task).
+  verdict: {
+    weekNumber: 7,
+    startDateKey: "2026-09-19",
+    endDateKey: "2026-09-25",
+    completed: 22,
+    total: 25,
+    percent: 88,
+    dayStats: [
+      { done: 4, total: 5 },
+      { done: 4, total: 5 },
+      { done: 3, total: 3 },
+      { done: 3, total: 4 },
+      { done: 3, total: 3 },
+      { done: 5, total: 5 },
+      { done: 0, total: 0 }, // the rest day
+    ],
+    prevWeek: { weekNumber: 6, percent: 82 },
+    delta: 6,
+    weekStreak: 3,
+    perfectDays: 3,
+    weakestTask: { name: "Exercise", percent: 62, done: 5, total: 8 },
+    note: null,
+  },
   days: [
     {
       dayIndex: 0,
@@ -78,8 +103,9 @@ const sample = renderWeeklySummaryEmail({
   ],
 });
 
-writeFileSync("email-preview.html", sample.html, "utf-8");
+mkdirSync("preview", { recursive: true });
+writeFileSync("preview/email-preview.html", sample.html, "utf-8");
 console.log("Subject:", sample.subject);
 console.log("--- text version ---");
 console.log(sample.text);
-console.log("\nWrote email-preview.html");
+console.log("\nWrote preview/email-preview.html");

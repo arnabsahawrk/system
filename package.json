@@ -13,7 +13,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "db:init": "psql \"$DATABASE_URL\" -f schema.sql",
-    "verify:dates": "tsx scripts/verify-date-logic.ts"
+    "verify:dates": "tsx scripts/verify-date-logic.ts",
+    "verify:logic": "tsx scripts/verify-logic.ts"
   },
   "dependencies": {
     "next": "16.3.6",

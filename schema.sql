@@ -152,3 +152,25 @@ create table if not exists webauthn_challenges (
   constraint webauthn_challenge_kind check (kind in ('register', 'unlock'))
 );
 create index if not exists webauthn_challenges_age_idx on webauthn_challenges(created_at);
+
+-- ------------------------------------------------------------
+--  6. Week notes: an optional one-line "what got in the way?"
+--     on a finished week. Kept in its own table on purpose, so a
+--     note can be written or removed without ever touching the
+--     week's task rows — history stays frozen, only the commentary
+--     on it is editable.
+--
+--     Already running? You don't need to do anything: the app
+--     creates this table itself the first time it's needed. The
+--     statement is here for fresh installs and for reference —
+--     safe to run more than once.
+-- ------------------------------------------------------------
+
+create table if not exists week_notes (
+  week_id    uuid primary key references weeks(id) on delete cascade,
+  note       text not null,
+  updated_at timestamptz not null default now(),
+
+  -- Mirrors NOTE_MAX_LENGTH in lib/goals.ts.
+  constraint week_note_len check (char_length(note) between 1 and 160)
+);

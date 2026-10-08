@@ -1,7 +1,8 @@
-import { DAY_LABELS } from "./types";
-import type { DayEntry } from "./types";
+import { DAY_LABELS, DAY_SHORT_LABELS } from "./types";
+import type { DayEntry, DayIndex, Verdict } from "./types";
 import { getProgressColor, getProgressMessage } from "./theme";
 import { parseDateKey } from "./date";
+import { TARGET_PERCENT, TASK_WINDOW_WEEKS } from "./goals";
 
 /**
  * Weekly summary email, sent once — right at the Saturday-6am rollover,
@@ -21,6 +22,9 @@ export interface FinishedWeekData {
   completed: number;
   total: number;
   percent: number;
+  /** How the week compares with the ones around it. Optional on purpose: if
+   * it can't be worked out, the email still goes out exactly as before. */
+  verdict?: Verdict | null;
 }
 
 function formatDateLabel(dateKey: string): string {
@@ -37,6 +41,56 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
+const MINUS = "\u2212";
+
+/** "+6 vs Week 11" / "\u22123 vs Week 11" / "same as Week 11" — null when there
+ * is no previous week to compare with. */
+function deltaPhrase(v: Verdict | null | undefined): string | null {
+  if (!v || v.delta === null || !v.prevWeek) return null;
+  if (v.delta > 0) return `+${v.delta} vs Week ${v.prevWeek.weekNumber}`;
+  if (v.delta < 0) return `${MINUS}${Math.abs(v.delta)} vs Week ${v.prevWeek.weekNumber}`;
+  return `same as Week ${v.prevWeek.weekNumber}`;
+}
+
+function streakPhrase(v: Verdict | null | undefined): string | null {
+  if (!v || v.weekStreak < 2) return null;
+  return `${v.weekStreak} weeks in a row at ${TARGET_PERCENT}% or more`;
+}
+
+/** A task is only called out while it still has room to improve. */
+function weakestPhrase(v: Verdict | null | undefined): { label: string; text: string } | null {
+  const t = v?.weakestTask;
+  if (!t || t.percent >= 100) return null;
+  return {
+    label: t.percent >= TARGET_PERCENT ? "Weakest task" : "Needs attention",
+    text: `${t.name} \u2014 ${t.percent}% over the last ${TASK_WINDOW_WEEKS} weeks (${t.done} of ${t.total})`,
+  };
+}
+
+/** Seven colored table cells — email clients strip SVG and scripts, but a
+ * plain table with background colors renders everywhere. A rest day gets a
+ * neutral cell, never the red of a 0% day. */
+function renderDayStrip(v: Verdict): string {
+  const cells = v.dayStats
+    .map((d) => {
+      const pct = d.total === 0 ? null : Math.round((d.done / d.total) * 100);
+      const bg = pct === null ? "#ece7dc" : getProgressColor(pct);
+      return `<td width="14%" height="26" style="height:26px;background:${bg};border-radius:6px;font-size:1px;line-height:1px;">&nbsp;</td>`;
+    })
+    .join("");
+  const labels = v.dayStats
+    .map((d, i) => {
+      const count = d.total === 0 ? "rest" : `${d.done}/${d.total}`;
+      return `<td align="center" style="padding-top:5px;font-family:'Courier New',monospace;font-size:10px;line-height:13px;letter-spacing:0.06em;text-transform:uppercase;color:#8a8a8a;">${DAY_SHORT_LABELS[i as DayIndex]}<br /><span style="letter-spacing:0;text-transform:none;color:#6b6b6b;">${count}</span></td>`;
+    })
+    .join("");
+  return `
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 18px;border-collapse:separate;border-spacing:4px 0;">
+                  <tr>${cells}</tr>
+                  <tr>${labels}</tr>
+                </table>`;
+}
+
 export function renderWeeklySummaryEmail(week: FinishedWeekData): {
   subject: string;
   html: string;
@@ -45,7 +99,25 @@ export function renderWeeklySummaryEmail(week: FinishedWeekData): {
   const message = getProgressMessage(week.percent);
   const color = getProgressColor(week.percent);
   const dateRange = `${formatDateLabel(week.startDateKey)} \u2013 ${formatDateLabel(week.endDateKey)}`;
-  const subject = `System \u2014 Week ${week.weekNumber}: ${week.percent}% \u2014 ${message}`;
+  const delta = deltaPhrase(week.verdict);
+  const streak = streakPhrase(week.verdict);
+  const weakest = weakestPhrase(week.verdict);
+  const subject = `System \u2014 Week ${week.weekNumber}: ${week.percent}%${delta ? ` (${delta})` : ""} \u2014 ${message}`;
+
+  const deltaColor =
+    !week.verdict || week.verdict.delta === null
+      ? "#8a8a8a"
+      : week.verdict.delta > 0
+        ? "#3f8f52"
+        : week.verdict.delta < 0
+          ? "#b3413f"
+          : "#8a8a8a";
+  const deltaArrow =
+    !week.verdict || week.verdict.delta === null || week.verdict.delta === 0
+      ? ""
+      : week.verdict.delta > 0
+        ? "&#9650; "
+        : "&#9660; ";
 
   const dayRows = week.days
     .map((day) => {
@@ -75,6 +147,9 @@ export function renderWeeklySummaryEmail(week: FinishedWeekData): {
   const textLines = [
     `SYSTEM \u2014 Week ${week.weekNumber} (${dateRange})`,
     `${week.completed}/${week.total} goals \u2014 ${week.percent}% \u2014 ${message}`,
+    ...(delta ? [`Change: ${delta}`] : []),
+    ...(streak ? [`Streak: ${streak}`] : []),
+    ...(weakest ? [`${weakest.label}: ${weakest.text}`] : []),
     "",
     ...week.days.map((day) => {
       const doneCount = day.tasks.filter((t) => t.completed).length;
@@ -86,6 +161,31 @@ export function renderWeeklySummaryEmail(week: FinishedWeekData): {
     "",
     "A project by Arnab Saha \u2014 https://arnabsaha.vercel.app/",
   ];
+
+  const verdictBlock = week.verdict
+    ? `
+                <div style="text-align:center;margin:-6px 0 18px;">
+                  ${
+                    delta
+                      ? `<div style="font-size:13px;font-weight:600;color:${deltaColor};">${deltaArrow}${escapeHtml(delta)}</div>`
+                      : ""
+                  }
+                  ${
+                    streak
+                      ? `<div style="font-size:12px;color:#6b6b6b;margin-top:3px;">${escapeHtml(streak)}</div>`
+                      : ""
+                  }
+                </div>
+                ${renderDayStrip(week.verdict)}
+                ${
+                  weakest
+                    ? `<div style="margin:0 0 16px;padding:11px 14px;background:#f4efe4;border-radius:10px;font-size:13px;line-height:18px;color:#3a3a3a;">
+                  <div style="font-family:'Courier New',monospace;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:#a2734d;margin-bottom:2px;">${escapeHtml(weakest.label)}</div>
+                  ${escapeHtml(weakest.text)}
+                </div>`
+                    : ""
+                }`
+    : "";
 
   const html = `<!doctype html>
 <html>
@@ -109,7 +209,7 @@ export function renderWeeklySummaryEmail(week: FinishedWeekData): {
                   <div style="display:inline-block;margin-top:12px;padding:6px 14px;border-radius:999px;background:${color};color:#111;font-size:13px;font-weight:600;">
                     ${escapeHtml(message)}
                   </div>
-                </div>
+                </div>${verdictBlock}
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
                   ${dayRows}
                 </table>

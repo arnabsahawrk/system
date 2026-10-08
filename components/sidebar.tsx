@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import Link from "next/link";
-import { Lock, ListChecks, Settings as SettingsIcon, X } from "lucide-react";
+import { ChartColumn, Lock, ListChecks, Settings as SettingsIcon, X } from "lucide-react";
 import { BrandMark } from "./brand-mark";
 
 /**
@@ -66,6 +66,7 @@ export function Sidebar({
           {hasPasscode && (
             <SidebarItem icon={<Lock size={17} />} label="Lock App" onClick={onLockNow} disabled={locking} />
           )}
+          <SidebarLink icon={<ChartColumn size={17} />} label="Insights" href="/insights" />
           <SidebarLink icon={<ListChecks size={17} />} label="Manage Tasks" href="/manage" />
           <SidebarItem icon={<SettingsIcon size={17} />} label="Settings" onClick={onOpenSettings} />
         </nav>

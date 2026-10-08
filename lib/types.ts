@@ -30,6 +30,11 @@ export interface TaskEntry {
   id: string;
   name: string;
   completed: boolean;
+  /** Today's tasks only. How many scheduled occurrences of this task (matched
+   * by name) were finished in a row, ending at its last *closed* occurrence —
+   * today not counted. The UI adds one while today's tick is on, so the
+   * number moves instantly with the checkbox, no round trip. */
+  chain?: number;
 }
 
 export interface DayEntry {
@@ -37,6 +42,12 @@ export interface DayEntry {
   /** ISO date (YYYY-MM-DD) this app-day maps to. */
   dateKey: string;
   tasks: TaskEntry[];
+}
+
+/** Done / total for one day — what each cell of a Records strip is drawn from. */
+export interface DayStat {
+  done: number;
+  total: number;
 }
 
 export interface WeekSummary {
@@ -48,10 +59,47 @@ export interface WeekSummary {
   /** 0–100, rounded. */
   percent: number;
   finalized: boolean;
+  /** Seven entries, Sat..Fri. Present on every week the history API returns;
+   * the live week's strip is derived from its own day cards instead. */
+  dayStats?: DayStat[];
+  /** The one-line "what got in the way?" reflection, if one was written. */
+  note?: string | null;
 }
 
 export interface CurrentWeek extends WeekSummary {
   days: DayEntry[];
+}
+
+/** One finished week with every task, for the Records post-mortem. */
+export type WeekDetail = CurrentWeek;
+
+export interface WeakestTask {
+  name: string;
+  /** 0–100, rounded. */
+  percent: number;
+  done: number;
+  total: number;
+}
+
+/** What the week-closed sheet and the weekly email say about a finished week. */
+export interface Verdict {
+  weekNumber: number;
+  startDateKey: string;
+  endDateKey: string;
+  completed: number;
+  total: number;
+  percent: number;
+  dayStats: DayStat[];
+  prevWeek: { weekNumber: number; percent: number } | null;
+  /** percent minus the previous week's percent; null with no previous week. */
+  delta: number | null;
+  /** Finished weeks in a row, ending with this one, at or above the target.
+   * 0 when this week itself missed it. */
+  weekStreak: number;
+  /** Days this week finished at 100%. */
+  perfectDays: number;
+  weakestTask: WeakestTask | null;
+  note: string | null;
 }
 
 /** All-time stats footer for the Tracker — computed over every finalized

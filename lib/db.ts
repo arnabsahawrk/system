@@ -33,6 +33,9 @@ const sql =
     max: 3,
     idle_timeout: 20,
     connect_timeout: 10,
+    // `create table if not exists` (lib/notes.ts) says "already exists,
+    // skipping" every time it's a no-op; that's expected, not worth a log line.
+    onnotice: () => {},
     types,
   });
 

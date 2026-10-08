@@ -4,19 +4,44 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Menu } from "lucide-react";
 import { BrandMark } from "./brand-mark";
-import { DayCard } from "./day-card";
-import { WeeklySummaryCard } from "./weekly-summary-card";
+import { DashboardSkeleton } from "./dashboard-skeleton";
+import { WeekView } from "./week-view";
 import { TrackerSection } from "./tracker-section";
 import { SettingsSheet } from "./settings-sheet";
 import { Sidebar } from "./sidebar";
 import { LiveClock } from "./live-clock";
-import { detectTimeZone, getAppDateKey, getAppDayIndex } from "@/lib/date";
+import { VerdictSheet } from "./verdict-sheet";
+import { fireConfettiFrom } from "@/lib/confetti";
+import { goToUnlock } from "@/lib/nav";
+import { addDaysToDateKey, detectTimeZone, getAppDateKey, getAppDayIndex } from "@/lib/date";
 import { clearTabUnlocked, isTabUnlocked } from "@/lib/tab-lock";
-import type { CurrentWeek, HistoryStats, WeekSummary } from "@/lib/types";
+import { applyTick, completesDay } from "@/lib/week-state";
+import type { CurrentWeek, HistoryStats, Verdict, WeekSummary } from "@/lib/types";
 import type { Settings } from "@/lib/session";
 
 const LOAD_TIMEOUT_MS = 9000;
 const EMPTY_STATS: HistoryStats = { weekCount: 0, avgCompleted: 0, avgTotal: 0, avgPercent: 0 };
+/** How long the "that tick didn't save" notice stays up. */
+const TICK_ERROR_MS = 5000;
+/** localStorage: the newest week whose closing sheet has been seen on this device. */
+const VERDICT_SEEN_KEY = "system:verdict-seen";
+
+function readSeenWeek(): number {
+  try {
+    const n = Number(window.localStorage.getItem(VERDICT_SEEN_KEY));
+    return Number.isFinite(n) ? n : 0;
+  } catch {
+    return 0; // storage blocked (private mode): the sheet may repeat, nothing breaks
+  }
+}
+
+function markSeenWeek(weekNumber: number) {
+  try {
+    window.localStorage.setItem(VERDICT_SEEN_KEY, String(weekNumber));
+  } catch {
+    // see above
+  }
+}
 
 export function Dashboard({ initialSettings }: { initialSettings: Settings }) {
   const [settings, setSettings] = useState(initialSettings);
@@ -28,27 +53,71 @@ export function Dashboard({ initialSettings }: { initialSettings: Settings }) {
   const [loading, setLoading] = useState(true);
   const [timedOut, setTimedOut] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [tickError, setTickError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [locking, setLocking] = useState(false);
   const [now, setNow] = useState(() => new Date());
+  const [verdict, setVerdict] = useState<Verdict | null>(null);
   const lastAppDate = useRef<string | null>(null);
+
+  // --- keeping the screen and the server in step -------------------------
+  // A tick is applied on screen the instant it's tapped and is NOT followed
+  // by a re-fetch (that used to cost two extra requests per tick, one of
+  // them opening the rollover transaction). Instead each tick sends the exact
+  // state it wants, so it can't be flipped the wrong way by a retry or a
+  // second device, and the screen is re-synced from the server only when
+  // something went wrong. The refs below make sure a slow, older response can
+  // never overwrite a tick made while it was still on the wire.
+  const loadSeq = useRef(0); // newest load wins
+  const inflight = useRef(0); // tick requests currently on the wire
+  const mutations = useRef(0); // bumps when a tick starts and when it finishes
+  const needsResync = useRef(false);
+  const resyncTimer = useRef<number | null>(null);
+  const tickErrorTimer = useRef<number | null>(null);
+  const weekRef = useRef<CurrentWeek | null | undefined>(undefined);
+  const loadWeekRef = useRef<() => Promise<void>>(async () => {});
+  const verdictAsked = useRef(0);
+
+  useEffect(() => {
+    weekRef.current = week;
+  }, [week]);
 
   // /api/week/current is the one call that actually runs the rollover
   // check (ensureCurrentWeek), which can change settings as a side effect
   // — pendingStartDate getting computed, or paused/pauseReason flipping
-  // automatically. Re-reading settings right after is what keeps e.g. the
-  // "Week 1 starts <date>" message from showing stale data.
+  // automatically — so it returns the settings read *after* that check,
+  // in the same response, keeping e.g. the "Week 1 starts <date>" message
+  // from ever showing stale data.
   const loadWeek = useCallback(async () => {
+    const seq = ++loadSeq.current;
+    const startedAt = mutations.current;
     const res = await fetch("/api/week/current");
     if (res.status === 401) {
-      window.location.href = "/unlock";
+      goToUnlock();
       return;
     }
-    if (res.ok) setWeek(await res.json());
-    const settingsRes = await fetch("/api/settings");
-    if (settingsRes.ok) setSettings(await settingsRes.json());
+    if (!res.ok) throw new Error(`week load failed: ${res.status}`);
+    const data = (await res.json()) as { week: CurrentWeek | null; settings: Settings };
+    if (seq !== loadSeq.current) return; // a newer load already answered
+    if (inflight.current > 0 || mutations.current !== startedAt) {
+      // A tick was sent or finished while this was in flight, so this
+      // snapshot may predate it. Don't paint over the screen with it; fetch a
+      // fresh one once the ticks have settled.
+      if (resyncTimer.current) window.clearTimeout(resyncTimer.current);
+      resyncTimer.current = window.setTimeout(() => {
+        resyncTimer.current = null;
+        loadWeekRef.current().catch(() => {});
+      }, 600);
+      return;
+    }
+    setWeek(data.week);
+    setSettings(data.settings);
   }, []);
+
+  useEffect(() => {
+    loadWeekRef.current = loadWeek;
+  }, [loadWeek]);
 
   const loadHistory = useCallback(async () => {
     const res = await fetch("/api/week/history");
@@ -84,7 +153,7 @@ export function Dashboard({ initialSettings }: { initialSettings: Settings }) {
   // half-finished by a stalled soft-navigation.
   useEffect(() => {
     if (initialSettings.hasPasscode && !isTabUnlocked()) {
-      window.location.href = "/unlock";
+      goToUnlock();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -136,8 +205,8 @@ export function Dashboard({ initialSettings }: { initialSettings: Settings }) {
   const appDate = getAppDateKey(now, settings.timezone);
   useEffect(() => {
     if (lastAppDate.current !== null && lastAppDate.current !== appDate) {
-      loadWeek();
-      loadHistory();
+      loadWeek().catch(() => {});
+      loadHistory().catch(() => {});
     }
     lastAppDate.current = appDate;
   }, [appDate, loadWeek, loadHistory]);
@@ -156,20 +225,94 @@ export function Dashboard({ initialSettings }: { initialSettings: Settings }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function toggleTask(taskId: string) {
-    setWeek((prev) => {
-      if (!prev) return prev;
-      const days = prev.days.map((d) => ({
-        ...d,
-        tasks: d.tasks.map((t) => (t.id === taskId ? { ...t, completed: !t.completed } : t)),
-      }));
-      return { ...prev, days };
-    });
-    const res = await fetch(`/api/week/tasks/${taskId}`, { method: "PATCH" });
-    if (!res.ok) setError("That tick didn't save — refreshing.");
-    await loadWeek();
-    if (res.ok) setError(null);
+  useEffect(
+    () => () => {
+      if (resyncTimer.current) window.clearTimeout(resyncTimer.current);
+      if (tickErrorTimer.current) window.clearTimeout(tickErrorTimer.current);
+    },
+    []
+  );
+
+  // The first time the app is opened after a week rolls over, show how that
+  // week ended. Only the week that *just* ended qualifies (it must run right
+  // up to the live week's start), and only once per device.
+  useEffect(() => {
+    if (loading || !week) return;
+    const latest = history[0];
+    if (!latest || !latest.finalized) return;
+    if (addDaysToDateKey(latest.startDateKey, 7) !== week.startDateKey) return;
+    if (readSeenWeek() >= latest.weekNumber) return;
+    if (verdictAsked.current >= latest.weekNumber) return;
+    verdictAsked.current = latest.weekNumber;
+    fetch(`/api/week/verdict?week=${latest.weekNumber}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((v: Verdict | null) => {
+        if (v) setVerdict(v);
+      })
+      .catch(() => {});
+  }, [loading, week, history]);
+
+  const handleNoteSaved = useCallback((weekNumber: number, note: string | null) => {
+    setHistory((h) => h.map((w) => (w.weekNumber === weekNumber ? { ...w, note } : w)));
+  }, []);
+
+  function closeVerdict() {
+    if (verdict) markSeenWeek(verdict.weekNumber);
+    setVerdict(null);
   }
+
+  function showTickError() {
+    setTickError("That tick didn't save — refreshing.");
+    if (tickErrorTimer.current) window.clearTimeout(tickErrorTimer.current);
+    tickErrorTimer.current = window.setTimeout(() => setTickError(null), TICK_ERROR_MS);
+  }
+
+  const toggleTask = useCallback(
+    async (taskId: string, next: boolean, row: HTMLElement | null) => {
+      // Celebrate the moment a day's last task is ticked — decided from what's
+      // on screen right now, before the tick is applied.
+      const current = weekRef.current;
+      if (next && current && completesDay(current, taskId)) {
+        fireConfettiFrom(row?.querySelector(".tick-box") ?? row);
+      }
+
+      setWeek((prev) => (prev ? applyTick(prev, taskId, next) : prev));
+      mutations.current++;
+      inflight.current++;
+      let ok = false;
+      try {
+        const res = await fetch(`/api/week/tasks/${taskId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ completed: next }),
+        });
+        if (res.status === 401) {
+          goToUnlock();
+          return;
+        }
+        ok = res.ok;
+      } catch {
+        ok = false; // offline or dropped: the server may or may not have it, so re-sync
+      }
+      inflight.current--;
+      mutations.current++;
+
+      if (!ok) {
+        needsResync.current = true;
+        showTickError();
+      }
+      // Once the last tick of a burst lands, re-sync only if one of them failed.
+      if (inflight.current === 0 && needsResync.current) {
+        needsResync.current = false;
+        try {
+          await loadWeek();
+        } catch {
+          setError("Couldn't refresh — check your connection.");
+        }
+      }
+    },
+    [loadWeek]
+  );
 
   async function lockNow() {
     setLocking(true);
@@ -179,30 +322,12 @@ export function Dashboard({ initialSettings }: { initialSettings: Settings }) {
       body: JSON.stringify({ action: "lock" }),
     });
     clearTabUnlocked();
-    window.location.href = "/unlock";
+    goToUnlock();
   }
 
   const timeZone = settings.timezone;
   const todayIndex = getAppDayIndex(now, timeZone);
-
-  if (loading || week === undefined) {
-    return (
-      <div className="flex min-h-dvh flex-col items-center justify-center gap-4 bg-bg px-6">
-        <BrandMark size={36} className="animate-pulse-soft" />
-        {timedOut && (
-          <div className="flex animate-fade-in flex-col items-center gap-2 text-center">
-            <p className="font-mono text-xs text-ink-muted">Still loading — this is taking longer than usual.</p>
-            <button
-              onClick={() => window.location.reload()}
-              className="rounded-full border border-border px-3 py-1 font-mono text-xs text-ink-muted transition-all hover:border-border-strong hover:text-ink active:scale-95"
-            >
-              Reload
-            </button>
-          </div>
-        )}
-      </div>
-    );
-  }
+  const showSkeleton = loading || week === undefined;
 
   return (
     <div className="min-h-dvh animate-fade-in bg-bg pb-16 text-ink">
@@ -229,21 +354,43 @@ export function Dashboard({ initialSettings }: { initialSettings: Settings }) {
         <button
           onClick={() => setSidebarOpen(true)}
           aria-label="Open menu"
-          className="rounded-lg p-2 text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+          className="rounded-lg p-2 text-ink-muted transition-all duration-200 hover:bg-surface-2 hover:text-ink active:scale-90"
         >
           <Menu size={20} />
         </button>
       </header>
 
-      {error && (
-        <div className="mx-auto max-w-6xl animate-fade-in px-4 pt-2 sm:px-6">
-          <p className="rounded-lg border border-clay/30 bg-clay/10 px-3 py-2 font-mono text-xs text-clay-strong">
-            {error}
-          </p>
+      {(error || tickError) && (
+        <div className="mx-auto flex max-w-6xl animate-fade-in flex-col gap-2 px-4 pt-2 sm:px-6" role="alert">
+          {error && (
+            <p className="rounded-lg border border-clay/30 bg-clay/10 px-3 py-2 font-mono text-xs text-clay-strong">
+              {error}
+            </p>
+          )}
+          {tickError && (
+            <p className="rounded-lg border border-clay/30 bg-clay/10 px-3 py-2 font-mono text-xs text-clay-strong">
+              {tickError}
+            </p>
+          )}
         </div>
       )}
 
-      {week === null ? (
+      {showSkeleton ? (
+        <>
+          <DashboardSkeleton />
+          {timedOut && (
+            <div className="mx-auto flex max-w-6xl animate-fade-in flex-col items-center gap-2 px-4 pt-8 text-center">
+              <p className="font-mono text-xs text-ink-muted">Still loading — this is taking longer than usual.</p>
+              <button
+                onClick={() => window.location.reload()}
+                className="rounded-full border border-border px-3 py-1 font-mono text-xs text-ink-muted transition-all hover:border-border-strong hover:text-ink active:scale-95"
+              >
+                Reload
+              </button>
+            </div>
+          )}
+        </>
+      ) : week === null ? (
         settings.paused && settings.pauseReason === "manual" ? (
           <PausedState pendingAction={settings.pendingAction} onOpenSettings={() => setSettingsOpen(true)} />
         ) : (
@@ -258,23 +405,9 @@ export function Dashboard({ initialSettings }: { initialSettings: Settings }) {
         )
       ) : (
         <>
-          <main className="mx-auto flex max-w-6xl flex-col gap-6 px-4 pt-4 sm:px-6 lg:flex-row lg:items-start">
-            <section className="flex-1">
-              <h2 className="mb-3 font-mono text-xs uppercase tracking-[0.2em] text-ink-muted">Everyday</h2>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                {week.days.map((day, i) => (
-                  <DayCard key={day.dayIndex} day={day} isUnlocked={i === todayIndex} onToggleTask={toggleTask} />
-                ))}
-              </div>
-            </section>
+          <WeekView week={week} todayIndex={todayIndex} onToggleTask={toggleTask} />
 
-            <aside className="w-full lg:w-[320px] lg:shrink-0">
-              <h2 className="mb-3 font-mono text-xs uppercase tracking-[0.2em] text-ink-muted">Weekly</h2>
-              <WeeklySummaryCard week={week} todayIndex={todayIndex} />
-            </aside>
-          </main>
-
-          <div className="mx-auto max-w-6xl px-4 pt-6 sm:px-6">
+          <div className="mx-auto max-w-6xl animate-rise px-4 pt-6 sm:px-6" style={{ animationDelay: "240ms" }}>
             <TrackerSection
               history={history}
               stats={stats}
@@ -282,6 +415,8 @@ export function Dashboard({ initialSettings }: { initialSettings: Settings }) {
               onLoadMore={loadMore}
               loadingMore={loadingMore}
               currentWeek={week}
+              todayIndex={todayIndex}
+              onNoteSaved={handleNoteSaved}
             />
           </div>
         </>
@@ -294,6 +429,8 @@ export function Dashboard({ initialSettings }: { initialSettings: Settings }) {
           onSettingsChanged={(patch) => setSettings((s) => ({ ...s, ...patch }))}
         />
       )}
+
+      {verdict && <VerdictSheet verdict={verdict} onClose={closeVerdict} onNoteSaved={handleNoteSaved} />}
     </div>
   );
 }

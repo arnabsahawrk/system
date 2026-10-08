@@ -1,9 +1,10 @@
 import type postgres from "postgres";
 import sql from "@/lib/db";
-import { getAppWeekStartDateKey, getWeekDateKeys, parseDateKey } from "@/lib/date";
+import { addDaysToDateKey, getAppWeekStartDateKey, getWeekDateKeys, parseDateKey } from "@/lib/date";
 import { sendWeeklySummaryEmail } from "@/lib/email";
 import type { FinishedWeekData } from "@/lib/email";
-import type { DayIndex } from "@/lib/types";
+import { getWeekVerdict } from "@/lib/verdict";
+import type { DayIndex, Verdict } from "@/lib/types";
 
 // sql.begin() hands the callback a TransactionSql, a distinct (larger) type
 // from the plain Sql instance in lib/db.ts — createWeek/finalizeWeek only
@@ -15,14 +16,6 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 // after a long absence is backfilled silently instead — a congratulations
 // email for a week that ended 3 weeks ago is just noise.
 const EMAIL_FRESHNESS_MS = 48 * 60 * 60 * 1000;
-
-function addDaysToDateKey(dateKey: string, days: number): string {
-  const { year, month, day } = parseDateKey(dateKey);
-  const d = new Date(Date.UTC(year, month - 1, day) + days * 86400000);
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(
-    d.getUTCDate()
-  ).padStart(2, "0")}`;
-}
 
 function parseDateKeyTuple(dateKey: string): [number, number, number] {
   const { year, month, day } = parseDateKey(dateKey);
@@ -90,7 +83,18 @@ async function loadFinishedWeekData(weekId: string): Promise<FinishedWeekData | 
   const total = tasks.length;
   const completed = tasks.filter((t) => t.completed).length;
 
+  // How the week compares with the ones around it. The email is the point of
+  // this function, so a failure here must never stop it going out: it just
+  // goes without the comparison.
+  let verdict: Verdict | null = null;
+  try {
+    verdict = await getWeekVerdict(week.week_number);
+  } catch (err) {
+    console.error("weekly email: comparison unavailable, sending without it:", err);
+  }
+
   return {
+    verdict,
     weekNumber: week.week_number,
     startDateKey,
     endDateKey: addDaysToDateKey(startDateKey, 6),
