@@ -1,62 +1,44 @@
-import { TARGET_PERCENT } from "./goals";
+import { percentOf } from "./stats";
 import type { CurrentWeek } from "./types";
 
 /**
- * "What would it take to land on target?" — plain arithmetic, deliberately
- * not a verdict: the live week still passes no judgment, this only says how
- * many of the ticks that can still happen are needed.
+ * What today adds to the week — plain arithmetic, not a verdict: the week
+ * still passes no judgment while it runs. This only says how far finishing
+ * today's tasks would carry it: what is ticked so far, plus what is still open
+ * today.
  */
 export type Pace =
   | { kind: "none" }
-  | { kind: "reached"; target: number }
-  | { kind: "need"; target: number; need: number; open: number }
-  | { kind: "out"; target: number; best: number };
+  | { kind: "rest"; percent: number }
+  | { kind: "open"; open: number; total: number; target: number }
+  | { kind: "done"; percent: number };
 
-/** Fewest completed tasks, out of `total`, whose *displayed* percentage
- * (Math.round of the share, as everywhere in the app) reaches `target`.
- * Integer maths so no float edge case can be off by one: the share rounds to
- * `target` once it is at least target − 0.5. */
-export function tasksNeededFor(total: number, target: number): number {
-  if (total <= 0) return 0;
-  return Math.min(total, Math.floor(((2 * target - 1) * total + 199) / 200));
-}
+export function computePace(week: CurrentWeek, todayIndex: number): Pace {
+  if (week.total <= 0) return { kind: "none" };
+  const today = week.days.find((d) => d.dayIndex === todayIndex);
+  if (!today || today.tasks.length === 0) return { kind: "rest", percent: week.percent };
 
-/** Unticked tasks that can still be ticked: today's and every later day's.
- * Earlier days are locked for good, so their unticked tasks are gone. */
-export function openTaskCount(week: CurrentWeek, todayIndex: number): number {
-  let open = 0;
-  for (const day of week.days) {
-    if (day.dayIndex < todayIndex) continue;
-    for (const t of day.tasks) if (!t.completed) open++;
-  }
-  return open;
-}
+  const total = today.tasks.length;
+  const open = today.tasks.filter((t) => !t.completed).length;
+  if (open === 0) return { kind: "done", percent: week.percent };
 
-export function computePace(
-  total: number,
-  completed: number,
-  open: number,
-  target: number = TARGET_PERCENT
-): Pace {
-  if (total <= 0) return { kind: "none" };
-  const required = tasksNeededFor(total, target);
-  const need = required - completed;
-  if (need <= 0) return { kind: "reached", target };
-  if (open < need) {
-    return { kind: "out", target, best: Math.round(((completed + open) / total) * 100) };
-  }
-  return { kind: "need", target, need, open };
+  // The same rounding as every percentage in the app, so once the last task
+  // is ticked the big number on the card is exactly this one — whatever else
+  // the rest of the week holds.
+  return { kind: "open", open, total, target: percentOf(week.completed + open, week.total) };
 }
 
 export function paceText(pace: Pace): string | null {
   switch (pace.kind) {
     case "none":
       return null;
-    case "reached":
-      return `${pace.target}% target reached`;
-    case "need":
-      return `Need ${pace.need} of the ${pace.open} open ${pace.open === 1 ? "task" : "tasks"} to reach ${pace.target}%`;
-    case "out":
-      return `Best possible now: ${pace.best}% \u2014 ${pace.target}% is out of reach`;
+    case "rest":
+      return `Rest day \u2014 the week holds at ${pace.percent}%`;
+    case "done":
+      return `Today's done \u2014 the week is at ${pace.percent}%`;
+    case "open":
+      if (pace.total === 1) return `Finish today's task to reach ${pace.target}%`;
+      if (pace.open === pace.total) return `Finish all ${pace.total} today to reach ${pace.target}%`;
+      return `Finish ${pace.open} more today to reach ${pace.target}%`;
   }
 }

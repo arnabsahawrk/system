@@ -62,8 +62,11 @@ export interface WeekSummary {
   /** Seven entries, Sat..Fri. Present on every week the history API returns;
    * the live week's strip is derived from its own day cards instead. */
   dayStats?: DayStat[];
-  /** The one-line "what got in the way?" reflection, if one was written. */
+  /** The week note, if one was written. */
   note?: string | null;
+  /** True once the note's one allowed change has been used. Set when a single
+   * finished week is loaded (WeekDetail), not on list rows. */
+  noteEdited?: boolean;
 }
 
 export interface CurrentWeek extends WeekSummary {
@@ -75,7 +78,7 @@ export type WeekDetail = CurrentWeek;
 
 export interface WeakestTask {
   name: string;
-  /** 0–100, rounded. */
+  /** 0–100, rounded. Over every finished week up to this one. */
   percent: number;
   done: number;
   total: number;
@@ -93,13 +96,13 @@ export interface Verdict {
   prevWeek: { weekNumber: number; percent: number } | null;
   /** percent minus the previous week's percent; null with no previous week. */
   delta: number | null;
-  /** Finished weeks in a row, ending with this one, at or above the target.
-   * 0 when this week itself missed it. */
-  weekStreak: number;
+  /** True when this week beat every earlier finished week (and there was one). */
+  bestWeek: boolean;
   /** Days this week finished at 100%. */
   perfectDays: number;
   weakestTask: WeakestTask | null;
   note: string | null;
+  noteEdited: boolean;
 }
 
 /** All-time stats footer for the Tracker — computed over every finalized
@@ -117,12 +120,17 @@ export interface HistoryPage {
   hasMore: boolean;
 }
 
-/** A single task-name row in the editable per-day template. */
-export interface TaskTemplateItem {
+/** One task in the list on the Manage Tasks screen. */
+export interface PlanTask {
   id: string;
-  dayIndex: DayIndex;
   name: string;
-  sortOrder: number;
+}
+
+/** The plan for the weeks to come: the list of tasks in order, and for each
+ * day (index 0 = Saturday … 6 = Friday) the ids of the tasks on it, in order. */
+export interface TaskPlan {
+  tasks: PlanTask[];
+  schedule: string[][];
 }
 
 /** One device that has biometric unlock switched on. */

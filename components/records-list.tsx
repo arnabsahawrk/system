@@ -1,11 +1,11 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { Check, ChevronDown, Quote, RotateCw } from "lucide-react";
 import { Collapse } from "./collapse";
 import { DayRing } from "./day-ring";
+import { NoteEditor } from "./note-editor";
 import { WeekStrip } from "./week-strip";
-import { NOTE_MAX_LENGTH } from "@/lib/goals";
 import { goToUnlock } from "@/lib/nav";
 import { getProgressColor, getProgressMessage, getProgressTint } from "@/lib/theme";
 import { DAY_SHORT_LABELS } from "@/lib/types";
@@ -53,7 +53,7 @@ export function RecordsList({
   weeks: WeekSummary[];
   stats: HistoryStats;
   todayIndex: number | null;
-  onNoteSaved: (weekNumber: number, note: string | null) => void;
+  onNoteSaved: (weekNumber: number, note: string) => void;
 }) {
   const newestFirst = [...weeks].sort((a, b) => b.weekNumber - a.weekNumber);
   const [openWeek, setOpenWeek] = useState<number | null>(null);
@@ -84,10 +84,12 @@ export function RecordsList({
     if (!details[weekNumber] || details[weekNumber]!.status === "error") void loadDetail(weekNumber);
   }
 
-  function handleNoteSaved(weekNumber: number, note: string | null) {
+  function handleNoteSaved(weekNumber: number, note: string, edited: boolean) {
     setDetails((d) => {
       const cur = d[weekNumber];
-      return cur?.status === "ready" ? { ...d, [weekNumber]: { status: "ready", data: { ...cur.data, note } } } : d;
+      return cur?.status === "ready"
+        ? { ...d, [weekNumber]: { status: "ready", data: { ...cur.data, note, noteEdited: edited } } }
+        : d;
     });
     onNoteSaved(weekNumber, note);
   }
@@ -160,7 +162,7 @@ function RecordRow({
   detail: DetailState | undefined;
   onToggle: () => void;
   onRetry: () => void;
-  onNoteSaved: (weekNumber: number, note: string | null) => void;
+  onNoteSaved: (weekNumber: number, note: string, edited: boolean) => void;
 }) {
   const live = !week.finalized;
   const message = live ? "In progress" : getProgressMessage(week.percent);
@@ -272,7 +274,7 @@ function DetailPanel({
   week: WeekSummary;
   detail: DetailState | undefined;
   onRetry: () => void;
-  onNoteSaved: (weekNumber: number, note: string | null) => void;
+  onNoteSaved: (weekNumber: number, note: string, edited: boolean) => void;
 }) {
   if (!detail || detail.status === "loading") {
     return (
@@ -335,116 +337,7 @@ function DetailPanel({
         </div>
       </div>
 
-      <NoteEditor weekNumber={week.weekNumber} saved={data.note ?? ""} onSaved={onNoteSaved} />
-    </div>
-  );
-}
-
-/** The optional "what got in the way?" line. Saving only ever writes the
- * note — the week's tasks are frozen and never touched from here. */
-export function NoteEditor({
-  weekNumber,
-  saved,
-  onSaved,
-  autoFocus = false,
-}: {
-  weekNumber: number;
-  saved: string;
-  onSaved: (weekNumber: number, note: string | null) => void;
-  autoFocus?: boolean;
-}) {
-  const [value, setValue] = useState(saved);
-  const [saving, setSaving] = useState(false);
-  const [state, setState] = useState<"idle" | "saved" | "error">("idle");
-  // Guards against a second save starting while one is on the wire (a blur
-  // and a tap on Save can arrive back to back).
-  const inFlight = useRef(false);
-  const normalized = value.replace(/\s+/g, " ").trim();
-  const dirty = normalized !== saved;
-
-  async function save() {
-    if (!dirty || inFlight.current) return;
-    inFlight.current = true;
-    setSaving(true);
-    setState("idle");
-    try {
-      const res = await fetch(`/api/week/${weekNumber}/note`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ note: value }),
-      });
-      if (res.status === 401) {
-        goToUnlock();
-        return;
-      }
-      if (!res.ok) throw new Error(String(res.status));
-      const json = (await res.json()) as { note: string | null };
-      setValue(json.note ?? "");
-      onSaved(weekNumber, json.note);
-      setState("saved");
-      window.setTimeout(() => setState("idle"), 1800);
-    } catch {
-      setState("error");
-    } finally {
-      inFlight.current = false;
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div>
-      <label
-        htmlFor={`note-${weekNumber}`}
-        className="mb-2 block font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint"
-      >
-        What got in the way?
-      </label>
-      <div className="flex items-center gap-2">
-        <input
-          id={`note-${weekNumber}`}
-          type="text"
-          value={value}
-          maxLength={NOTE_MAX_LENGTH}
-          autoFocus={autoFocus}
-          onChange={(e) => {
-            setValue(e.target.value);
-            setState("idle");
-          }}
-          // Leaving the field saves what's there, so a note typed and then
-          // abandoned by tapping elsewhere is never silently lost.
-          onBlur={() => void save()}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              void save();
-            }
-          }}
-          placeholder="Optional, one line"
-          className="min-w-0 flex-1 rounded-lg border border-border bg-black/20 px-3 py-2 font-mono text-xs text-ink outline-none transition-colors placeholder:text-ink-faint focus:border-accent/60"
-        />
-        <button
-          type="button"
-          onClick={() => void save()}
-          disabled={!dirty || saving}
-          className={`shrink-0 rounded-lg border px-3 py-2 font-mono text-xs transition-all duration-200 active:scale-95 ${
-            dirty
-              ? "border-accent/50 bg-accent/15 text-accent-strong"
-              : "pointer-events-none border-transparent text-ink-faint opacity-60"
-          }`}
-        >
-          {saving ? "Saving\u2026" : state === "saved" ? "Saved" : normalized === "" && saved !== "" ? "Clear" : "Save"}
-        </button>
-      </div>
-      <div className="mt-1.5 flex min-h-[16px] items-center justify-between font-mono text-[10px]">
-        <span className={state === "error" ? "text-clay-strong" : "text-transparent"}>
-          Couldn&apos;t save — try again.
-        </span>
-        {value.length >= NOTE_MAX_LENGTH - 40 && (
-          <span className="text-ink-faint">
-            {value.length}/{NOTE_MAX_LENGTH}
-          </span>
-        )}
-      </div>
+      <NoteEditor weekNumber={week.weekNumber} saved={data.note ?? ""} edited={data.noteEdited ?? false} onSaved={onNoteSaved} />
     </div>
   );
 }

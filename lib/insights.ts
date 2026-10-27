@@ -1,4 +1,3 @@
-import { TARGET_PERCENT } from "./goals";
 import { RESET_HOUR, getLocalMinutesOfDay } from "./date";
 import { aggregatePercent, formatClock, median, percentOf, rankTasks, runStats } from "./stats";
 import type { DayIndex } from "./types";
@@ -9,13 +8,14 @@ import type { DayIndex } from "./types";
  * there is no number that can drift out of step with the actual ticks. The
  * SQL that feeds this lives in lib/insights-db.ts.
  *
+ * It looks at everything, from the first day: no "last 4 weeks" windows.
  * Three rules keep the numbers honest:
- *  - Only days that have *closed* (before today's 06:00-based date) can ever
- *    break a streak or drag a rate down. Today and the days ahead are not
+ *  - Only days that have *closed* (before today's 06:00-based date) count
+ *    towards rates and can end a streak. Today and the days ahead are not
  *    failures, they're unfinished.
  *  - A day with no tasks is a rest day: invisible to every streak and rate.
- *  - Today can only *add* to a streak (once it is finished); it never
- *    removes one while it is still open.
+ *  - Today can only *add* to a streak (once it qualifies); it never removes
+ *    one while it is still open.
  */
 
 export interface DayRow {
@@ -45,9 +45,9 @@ export interface InsightsInput {
   todayKey: string;
   timeZone: string;
   days: DayRow[];
-  /** Per-task tallies over the recent window, closed days only. */
+  /** Per-task tallies over closed days. */
   tasks: TaskRow[];
-  /** Completed ticks over the recent window. */
+  /** Every completed tick. */
   ticks: TickRow[];
 }
 
@@ -59,25 +59,36 @@ export interface StreakPair {
 export interface Insights {
   /** False until at least one day with tasks has closed. */
   hasData: boolean;
-  closedDays: number;
-  finishedWeeks: number;
-  streaks: {
-    perfectDays: StreakPair;
-    strongDays: StreakPair;
-    weeks: StreakPair;
-  };
-  bests: {
-    bestWeek: { weekNumber: number; percent: number; done: number; total: number } | null;
-    mostTasks: { weekNumber: number; done: number } | null;
-    biggestJump: { weekNumber: number; fromWeekNumber: number; delta: number } | null;
+  overview: {
+    /** Share of tasks done on finished days, 0–100. */
+    percent: number;
+    done: number;
+    total: number;
+    finishedWeeks: number;
+    /** Days when every task was done (today included once it is). */
     perfectDays: number;
   };
-  shape: {
-    /** Sat..Fri. percent is null for a weekday that has no closed day yet. */
-    weekdays: { dayIndex: DayIndex; percent: number | null; days: number }[];
-    sampleWeeks: number;
-    trend: { weeks: number; recent: number; prior: number; delta: number } | null;
+  streaks: {
+    /** Days in a row with every task done. */
+    perfect: StreakPair;
+    /** Days in a row with at least one task done. */
+    active: StreakPair;
   };
+  weeks: {
+    /** Every finished week, oldest first. */
+    list: { weekNumber: number; percent: number }[];
+    average: number | null;
+    best: { weekNumber: number; percent: number } | null;
+    /** The newest finished week; `vsAverage` is null until there are two. */
+    latest: { weekNumber: number; percent: number; vsAverage: number | null } | null;
+  };
+  /** Sat..Fri. percent is null for a weekday that has no closed day yet. */
+  weekdays: { dayIndex: DayIndex; percent: number | null; days: number }[];
+  /** The strongest and weakest weekday; null until two weekdays differ. */
+  dayExtremes: {
+    best: { dayIndex: DayIndex; percent: number };
+    worst: { dayIndex: DayIndex; percent: number };
+  } | null;
   /** Weakest first; tasks seen fewer than MIN_TASK_SAMPLES times are left out. */
   tasks: { name: string; percent: number; done: number; total: number }[];
   clock: {
@@ -86,15 +97,17 @@ export interface Insights {
     medianLabel: string | null;
     /** 24 buckets; index 0 is the 06:00 hour (the day's start), 23 is 05:00. */
     hourBuckets: number[];
-    /** Closed days in the window that had at least one tick. */
+    /** Closed days that had at least one tick. */
     tickDays: number;
-    /** Of those, days whose last tick landed after midnight (the 06:00 grace window). */
+    /** Of those, days whose last tick landed after midnight (before 06:00). */
     afterMidnightDays: number;
   };
 }
 
 /** Minutes after the 06:00 day start at which wall-clock midnight falls. */
 const MIDNIGHT_OFFSET = (24 - RESET_HOUR) * 60;
+
+const DAY_INDEXES = [0, 1, 2, 3, 4, 5, 6] as DayIndex[];
 
 function byDate(a: DayRow, b: DayRow): number {
   return a.date < b.date ? -1 : a.date > b.date ? 1 : 0;
@@ -106,23 +119,18 @@ export function computeInsights(input: InsightsInput): Insights {
   const closed = withTasks.filter((d) => d.date < todayKey).sort(byDate);
   const today = withTasks.find((d) => d.date === todayKey) ?? null;
 
-  // --- day streaks -------------------------------------------------------
+  // --- streaks -------------------------------------------------------------
   const perfectFlags = closed.map((d) => d.done === d.total);
-  const strongFlags = closed.map((d) => percentOf(d.done, d.total) >= TARGET_PERCENT);
+  const activeFlags = closed.map((d) => d.done > 0);
   if (today) {
     if (today.done === today.total) perfectFlags.push(true);
-    if (percentOf(today.done, today.total) >= TARGET_PERCENT) strongFlags.push(true);
+    if (today.done > 0) activeFlags.push(true);
   }
 
-  // --- weeks -------------------------------------------------------------
+  // --- weeks ---------------------------------------------------------------
   const weekMap = new Map<number, { weekNumber: number; finalized: boolean; done: number; total: number }>();
   for (const d of withTasks) {
-    const w = weekMap.get(d.weekNumber) ?? {
-      weekNumber: d.weekNumber,
-      finalized: d.finalized,
-      done: 0,
-      total: 0,
-    };
+    const w = weekMap.get(d.weekNumber) ?? { weekNumber: d.weekNumber, finalized: d.finalized, done: 0, total: 0 };
     w.done += d.done;
     w.total += d.total;
     weekMap.set(d.weekNumber, w);
@@ -132,57 +140,44 @@ export function computeInsights(input: InsightsInput): Insights {
     .sort((a, b) => a.weekNumber - b.weekNumber)
     .map((w) => ({ ...w, percent: percentOf(w.done, w.total) }));
 
-  const weekFlags = finished.map((w) => w.percent >= TARGET_PERCENT);
-
-  // --- personal bests ------------------------------------------------------
-  let bestWeek: Insights["bests"]["bestWeek"] = null;
-  let mostTasks: Insights["bests"]["mostTasks"] = null;
+  const average = finished.length === 0 ? null : aggregatePercent(finished);
+  let best: Insights["weeks"]["best"] = null;
   for (const w of finished) {
-    if (
-      !bestWeek ||
-      w.percent > bestWeek.percent ||
-      (w.percent === bestWeek.percent && w.done >= bestWeek.done)
-    ) {
-      bestWeek = { weekNumber: w.weekNumber, percent: w.percent, done: w.done, total: w.total };
-    }
-    if (!mostTasks || w.done >= mostTasks.done) {
-      mostTasks = { weekNumber: w.weekNumber, done: w.done };
-    }
+    if (!best || w.percent >= best.percent) best = { weekNumber: w.weekNumber, percent: w.percent };
   }
-  let biggestJump: Insights["bests"]["biggestJump"] = null;
-  for (let i = 1; i < finished.length; i++) {
-    const prev = finished[i - 1]!;
-    const cur = finished[i]!;
-    if (cur.weekNumber !== prev.weekNumber + 1) continue; // only back-to-back weeks
-    const delta = cur.percent - prev.percent;
-    if (delta > 0 && (!biggestJump || delta >= biggestJump.delta)) {
-      biggestJump = { weekNumber: cur.weekNumber, fromWeekNumber: prev.weekNumber, delta };
-    }
-  }
-  const perfectDays = perfectFlags.filter(Boolean).length;
+  const newest = finished[finished.length - 1];
+  const latest: Insights["weeks"]["latest"] = newest
+    ? {
+        weekNumber: newest.weekNumber,
+        percent: newest.percent,
+        vsAverage: finished.length >= 2 && average !== null ? newest.percent - average : null,
+      }
+    : null;
 
-  // --- shape ---------------------------------------------------------------
-  const weekdays = ([0, 1, 2, 3, 4, 5, 6] as DayIndex[]).map((dayIndex) => {
+  // --- overview ------------------------------------------------------------
+  const done = closed.reduce((n, d) => n + d.done, 0);
+  const total = closed.reduce((n, d) => n + d.total, 0);
+
+  // --- weekdays ------------------------------------------------------------
+  const weekdays = DAY_INDEXES.map((dayIndex) => {
     const rows = closed.filter((d) => d.dayIndex === dayIndex);
-    return {
-      dayIndex,
-      percent: rows.length === 0 ? null : aggregatePercent(rows),
-      days: rows.length,
-    };
+    return { dayIndex, percent: rows.length === 0 ? null : aggregatePercent(rows), days: rows.length };
   });
-  const sampleWeeks = new Set(closed.map((d) => d.weekNumber)).size;
-
-  let trend: Insights["shape"]["trend"] = null;
-  if (finished.length >= 2) {
-    const k = Math.min(4, Math.floor(finished.length / 2));
-    const recentRows = finished.slice(finished.length - k);
-    const priorRows = finished.slice(finished.length - 2 * k, finished.length - k);
-    const recent = aggregatePercent(recentRows);
-    const prior = aggregatePercent(priorRows);
-    trend = { weeks: k, recent, prior, delta: recent - prior };
+  let strongest: { dayIndex: DayIndex; percent: number } | null = null;
+  let weakest: { dayIndex: DayIndex; percent: number } | null = null;
+  let withData = 0;
+  for (const w of weekdays) {
+    if (w.percent === null) continue;
+    withData++;
+    if (!strongest || w.percent > strongest.percent) strongest = { dayIndex: w.dayIndex, percent: w.percent };
+    if (!weakest || w.percent < weakest.percent) weakest = { dayIndex: w.dayIndex, percent: w.percent };
   }
+  const dayExtremes =
+    withData >= 2 && strongest && weakest && strongest.percent > weakest.percent
+      ? { best: strongest, worst: weakest }
+      : null;
 
-  // --- task consistency ----------------------------------------------------
+  // --- tasks ---------------------------------------------------------------
   const tasks = rankTasks(input.tasks).map((t) => ({
     name: t.name,
     percent: t.percent,
@@ -203,24 +198,31 @@ export function computeInsights(input: InsightsInput): Insights {
   }
   let tickDays = 0;
   let afterMidnightDays = 0;
-  for (const [date, latest] of latestByDate) {
+  for (const [date, last] of latestByDate) {
     if (date >= todayKey) continue; // today is still open — it hasn't "closed" at any time yet
     tickDays++;
-    if (latest >= MIDNIGHT_OFFSET) afterMidnightDays++;
+    if (last >= MIDNIGHT_OFFSET) afterMidnightDays++;
   }
   const med = median(minutes);
 
   return {
     hasData: closed.length > 0,
-    closedDays: closed.length,
-    finishedWeeks: finished.length,
-    streaks: {
-      perfectDays: runStats(perfectFlags),
-      strongDays: runStats(strongFlags),
-      weeks: runStats(weekFlags),
+    overview: {
+      percent: percentOf(done, total),
+      done,
+      total,
+      finishedWeeks: finished.length,
+      perfectDays: perfectFlags.filter(Boolean).length,
     },
-    bests: { bestWeek, mostTasks, biggestJump, perfectDays },
-    shape: { weekdays, sampleWeeks, trend },
+    streaks: { perfect: runStats(perfectFlags), active: runStats(activeFlags) },
+    weeks: {
+      list: finished.map((w) => ({ weekNumber: w.weekNumber, percent: w.percent })),
+      average,
+      best,
+      latest,
+    },
+    weekdays,
+    dayExtremes,
     tasks,
     clock: {
       ticks: minutes.length,

@@ -56,7 +56,6 @@ export function WeekStrip({
               key={i}
               role="img"
               aria-label={`${name}: ${future ? "still ahead" : caption}`}
-              title={`${name}: ${future ? "still ahead" : caption}`}
               className={`origin-bottom animate-bar-grow rounded-[5px] ${cls}`}
               style={style}
             />

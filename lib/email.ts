@@ -2,7 +2,6 @@ import { DAY_LABELS, DAY_SHORT_LABELS } from "./types";
 import type { DayEntry, DayIndex, Verdict } from "./types";
 import { getProgressColor, getProgressMessage } from "./theme";
 import { parseDateKey } from "./date";
-import { TARGET_PERCENT, TASK_WINDOW_WEEKS } from "./goals";
 
 /**
  * Weekly summary email, sent once — right at the Saturday-6am rollover,
@@ -52,9 +51,9 @@ function deltaPhrase(v: Verdict | null | undefined): string | null {
   return `same as Week ${v.prevWeek.weekNumber}`;
 }
 
-function streakPhrase(v: Verdict | null | undefined): string | null {
-  if (!v || v.weekStreak < 2) return null;
-  return `${v.weekStreak} weeks in a row at ${TARGET_PERCENT}% or more`;
+/** Said only when this week beat every earlier one. */
+function bestPhrase(v: Verdict | null | undefined): string | null {
+  return v?.bestWeek ? "New best week" : null;
 }
 
 /** A task is only called out while it still has room to improve. */
@@ -62,8 +61,8 @@ function weakestPhrase(v: Verdict | null | undefined): { label: string; text: st
   const t = v?.weakestTask;
   if (!t || t.percent >= 100) return null;
   return {
-    label: t.percent >= TARGET_PERCENT ? "Weakest task" : "Needs attention",
-    text: `${t.name} \u2014 ${t.percent}% over the last ${TASK_WINDOW_WEEKS} weeks (${t.done} of ${t.total})`,
+    label: "Weakest task",
+    text: `${t.name} \u2014 ${t.percent}% overall (${t.done} of ${t.total})`,
   };
 }
 
@@ -100,7 +99,7 @@ export function renderWeeklySummaryEmail(week: FinishedWeekData): {
   const color = getProgressColor(week.percent);
   const dateRange = `${formatDateLabel(week.startDateKey)} \u2013 ${formatDateLabel(week.endDateKey)}`;
   const delta = deltaPhrase(week.verdict);
-  const streak = streakPhrase(week.verdict);
+  const best = bestPhrase(week.verdict);
   const weakest = weakestPhrase(week.verdict);
   const subject = `System \u2014 Week ${week.weekNumber}: ${week.percent}%${delta ? ` (${delta})` : ""} \u2014 ${message}`;
 
@@ -148,7 +147,7 @@ export function renderWeeklySummaryEmail(week: FinishedWeekData): {
     `SYSTEM \u2014 Week ${week.weekNumber} (${dateRange})`,
     `${week.completed}/${week.total} goals \u2014 ${week.percent}% \u2014 ${message}`,
     ...(delta ? [`Change: ${delta}`] : []),
-    ...(streak ? [`Streak: ${streak}`] : []),
+    ...(best ? [best] : []),
     ...(weakest ? [`${weakest.label}: ${weakest.text}`] : []),
     "",
     ...week.days.map((day) => {
@@ -171,8 +170,8 @@ export function renderWeeklySummaryEmail(week: FinishedWeekData): {
                       : ""
                   }
                   ${
-                    streak
-                      ? `<div style="font-size:12px;color:#6b6b6b;margin-top:3px;">${escapeHtml(streak)}</div>`
+                    best
+                      ? `<div style="font-size:12px;font-weight:600;color:#3f8f52;margin-top:3px;">${escapeHtml(best)}</div>`
                       : ""
                   }
                 </div>

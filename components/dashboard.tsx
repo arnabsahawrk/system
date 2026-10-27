@@ -252,7 +252,7 @@ export function Dashboard({ initialSettings }: { initialSettings: Settings }) {
       .catch(() => {});
   }, [loading, week, history]);
 
-  const handleNoteSaved = useCallback((weekNumber: number, note: string | null) => {
+  const handleNoteSaved = useCallback((weekNumber: number, note: string) => {
     setHistory((h) => h.map((w) => (w.weekNumber === weekNumber ? { ...w, note } : w)));
   }, []);
 

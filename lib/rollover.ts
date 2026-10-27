@@ -1,8 +1,9 @@
 import type postgres from "postgres";
 import sql from "@/lib/db";
-import { addDaysToDateKey, getAppWeekStartDateKey, getWeekDateKeys, parseDateKey } from "@/lib/date";
+import { addDaysToDateKey, getAppWeekStartDateKey, parseDateKey } from "@/lib/date";
 import { sendWeeklySummaryEmail } from "@/lib/email";
 import type { FinishedWeekData } from "@/lib/email";
+import { ensureTaskLibrary } from "@/lib/task-library";
 import { getWeekVerdict } from "@/lib/verdict";
 import type { DayIndex, Verdict } from "@/lib/types";
 
@@ -38,9 +39,11 @@ interface Settings {
   pending_start_date: string | null;
 }
 
-/** Snapshots the live task_templates into week_tasks for a newly created
- * week. Templates are read as they stand right now — this is the one
- * moment edits made via /manage actually take effect. */
+/** Snapshots the plan (each day's tasks, in order, from the task list) into
+ * week_tasks for a newly created week. The plan is read as it stands right
+ * now — this is the one moment edits made via /manage actually take effect.
+ * One statement, and each day's order is renumbered 0..n-1 so no two tasks
+ * ever tie. */
 async function createWeek(tx: Tx, weekNumber: number, startDateKey: string): Promise<string> {
   const [week] = await tx<{ id: string }[]>`
     insert into weeks (week_number, start_date) values (${weekNumber}, ${startDateKey})
@@ -48,20 +51,12 @@ async function createWeek(tx: Tx, weekNumber: number, startDateKey: string): Pro
   `;
   if (!week) throw new Error("Failed to create week row");
 
-  const templates = await tx<{ day_index: number; name: string; sort_order: number }[]>`
-    select day_index, name, sort_order from task_templates order by day_index, sort_order
+  await tx`
+    insert into week_tasks (week_id, day_index, date, name, sort_order)
+    select ${week.id}, tt.day_index, ${startDateKey}::date + tt.day_index::int, t.name,
+           (row_number() over (partition by tt.day_index order by tt.sort_order, t.sort_order, t.id) - 1)::int
+    from task_templates tt join tasks t on t.id = tt.task_id
   `;
-  const dateKeys = getWeekDateKeys(startDateKey);
-
-  for (const [dayIndex, dateKey] of dateKeys.entries()) {
-    const dayTemplates = templates.filter((t) => t.day_index === dayIndex);
-    for (const t of dayTemplates) {
-      await tx`
-        insert into week_tasks (week_id, day_index, date, name, sort_order)
-        values (${week.id}, ${dayIndex}, ${dateKey}, ${t.name}, ${t.sort_order})
-      `;
-    }
-  }
   return week.id;
 }
 
@@ -151,6 +146,7 @@ async function claimAndEmail(weekId: string, notifyEmail: string): Promise<void>
  *  - Concurrent calls: a row-level lock on the latest week serializes them.
  */
 export async function ensureCurrentWeek(now: Date): Promise<void> {
+  await ensureTaskLibrary();
   const [settingsRow] = await sql<Settings[]>`
     select timezone, notify_email, notifications_enabled, paused, pending_action, pause_reason, pending_start_date
     from user_settings where singleton = true

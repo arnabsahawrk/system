@@ -130,7 +130,17 @@ export function BiometricSettings() {
   }
 
   // Nothing to show until it's known whether this browser can do it at all.
-  if (supported === null || devices === null) return null;
+  if (supported === null || devices === null) {
+    return (
+      <div className="flex items-center justify-between gap-4" aria-busy="true">
+        <div className="flex flex-col gap-1.5">
+          <div className="skeleton h-3 w-28" />
+          <div className="skeleton h-2.5 w-44" />
+        </div>
+        <div className="skeleton h-7 w-12 rounded-full" />
+      </div>
+    );
+  }
 
   const name = biometricName();
   const detail = loadErr

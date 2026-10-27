@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Lock } from "lucide-react";
 import { Collapse } from "./collapse";
 import { DayCard, DayTasks } from "./day-card";
 import type { DayStatus, ToggleHandler } from "./day-card";
@@ -183,6 +183,7 @@ function DayRow({
           {DAY_LABELS[day.dayIndex]}
         </span>
         <span className="ml-auto font-mono text-[11px] text-ink-faint">{summary}</span>
+        <Lock size={12} className="shrink-0 text-ink-faint" aria-hidden="true" />
         <ChevronDown
           size={16}
           className={`shrink-0 text-ink-faint transition-transform duration-300 ease-spring ${open ? "rotate-180" : ""}`}
@@ -190,7 +191,11 @@ function DayRow({
       </button>
       <Collapse open={open}>
         <div className="border-t border-border bg-black/10">
-          <DayTasks day={day} status={status} onToggleTask={onToggleTask} />
+          {/* Only today can be ticked. Every other day opens faded and locked,
+              the same as its card in the wide grid. */}
+          <div className="opacity-55">
+            <DayTasks day={day} status={status} onToggleTask={onToggleTask} />
+          </div>
         </div>
       </Collapse>
     </div>

@@ -221,7 +221,7 @@ export async function getHistoryPage(beforeWeekNumber?: number): Promise<History
       percent: percentOf(r.completed, r.total),
       finalized: true,
       dayStats,
-      note: notes.get(r.week_number) ?? null,
+      note: notes.get(r.week_number)?.note ?? null,
     };
   });
 
@@ -262,7 +262,7 @@ export async function getWeekDetail(weekNumber: number): Promise<WeekDetail | nu
   `;
   if (!week || !week.finalized) return null;
 
-  const [tasks, note] = await Promise.all([
+  const [tasks, saved] = await Promise.all([
     sql<TaskRow[]>`
       select day_index, date, id, name, completed from week_tasks
       where week_id = ${week.id} order by day_index, sort_order
@@ -281,7 +281,8 @@ export async function getWeekDetail(weekNumber: number): Promise<WeekDetail | nu
     percent: percentOf(completed, total),
     finalized: true,
     dayStats: dayStatsOf(days),
-    note,
+    note: saved?.note ?? null,
+    noteEdited: saved?.edited ?? false,
     days,
   };
 }

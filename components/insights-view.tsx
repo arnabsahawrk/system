@@ -3,23 +3,30 @@
 import { useCallback, useEffect, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import Link from "next/link";
-import { ArrowLeft, ArrowRight, Clock, Flame, ListChecks, RotateCw, Sparkles, TrendingDown, TrendingUp, Trophy } from "lucide-react";
+import { ArrowRight, Clock, Flame, RotateCw, TrendingDown, TrendingUp } from "lucide-react";
 import { BrandMark } from "./brand-mark";
+import { InsightsBodySkeleton } from "./insights-skeleton";
+import { PageHeader } from "./page-header";
 import { goToUnlock } from "@/lib/nav";
-import { TARGET_PERCENT, TASK_WINDOW_WEEKS } from "@/lib/goals";
-import { getProgressColor } from "@/lib/theme";
 import { isTabUnlocked } from "@/lib/tab-lock";
+import { plural } from "@/lib/task-name";
+import { getProgressColor } from "@/lib/theme";
 import { useCountUp } from "@/lib/use-count-up";
-import { DAY_SHORT_LABELS } from "@/lib/types";
+import { DAY_LABELS, DAY_SHORT_LABELS } from "@/lib/types";
 import type { Insights } from "@/lib/insights";
 
 const CARD = "rounded-xl2 border border-border bg-surface p-5 shadow-card";
 const LABEL = "font-mono text-[11px] uppercase tracking-[0.2em] text-ink-muted";
+const CAPTION = "font-mono text-[11px] leading-snug text-ink-faint";
 const TASKS_SHOWN = 6;
+// Sampled across the same red-to-green scale every strip uses.
+const LEGEND_STOPS = [0, 17, 33, 50, 67, 83, 100];
 
-/** Every figure here is recomputed from the task rows each time the page
- * opens — streaks, bests, weekday shape, task consistency, tick clock — so
- * there is no stored number that can drift from what actually happened. */
+const number = (n: number) => n.toLocaleString("en-US");
+
+/** Everything on this page is worked out from the task rows each time it
+ * opens, over the whole history — nothing is stored, so no number can drift
+ * from what actually happened. */
 export function InsightsView({ hasPasscode }: { hasPasscode: boolean }) {
   const [data, setData] = useState<Insights | null>(null);
   const [failed, setFailed] = useState(false);
@@ -46,16 +53,7 @@ export function InsightsView({ hasPasscode }: { hasPasscode: boolean }) {
 
   return (
     <div className="min-h-dvh animate-fade-in bg-bg pb-16 text-ink">
-      <header className="mx-auto flex max-w-6xl items-center gap-3 px-4 pb-2 pt-8 sm:px-6">
-        <Link
-          href="/"
-          aria-label="Back"
-          className="rounded-lg p-2 text-ink-muted transition-all duration-200 hover:bg-surface-2 hover:text-ink active:scale-90"
-        >
-          <ArrowLeft size={18} />
-        </Link>
-        <h1 className="font-mono text-lg font-bold uppercase tracking-[0.25em]">Insights</h1>
-      </header>
+      <PageHeader title="Insights" />
 
       <main className="mx-auto max-w-6xl px-4 pt-3 sm:px-6">
         {failed ? (
@@ -70,24 +68,27 @@ export function InsightsView({ hasPasscode }: { hasPasscode: boolean }) {
             </button>
           </div>
         ) : !data ? (
-          <Skeleton />
+          <InsightsBodySkeleton />
         ) : !data.hasData ? (
           <EmptyState />
         ) : (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <Reveal index={0} className="lg:col-span-2">
-              <StreaksCard data={data} />
+            <Reveal index={0}>
+              <OverallCard data={data} />
             </Reveal>
             <Reveal index={1}>
-              <BestsCard data={data} />
+              <StreaksCard data={data} />
             </Reveal>
-            <Reveal index={2}>
-              <ShapeCard data={data} />
+            <Reveal index={2} className="lg:col-span-2">
+              <WeeksCard data={data} />
             </Reveal>
             <Reveal index={3}>
-              <TasksCard data={data} />
+              <DaysCard data={data} />
             </Reveal>
             <Reveal index={4}>
+              <TasksCard data={data} />
+            </Reveal>
+            <Reveal index={5} className="lg:col-span-2">
               <ClockCard data={data} />
             </Reveal>
           </div>
@@ -105,35 +106,13 @@ function Reveal({ index, className = "", children }: { index: number; className?
   );
 }
 
-function Skeleton() {
-  return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2" aria-busy="true" aria-label="Loading insights">
-      <div className={`${CARD} lg:col-span-2`}>
-        <div className="skeleton h-3 w-20" />
-        <div className="mt-5 grid grid-cols-3 gap-3">
-          {[0, 1, 2].map((i) => (
-            <div key={i} className="skeleton h-24" />
-          ))}
-        </div>
-      </div>
-      {[0, 1, 2, 3].map((i) => (
-        <div key={i} className={CARD}>
-          <div className="skeleton h-3 w-24" />
-          <div className="skeleton mt-5 h-28" />
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function EmptyState() {
   return (
     <div className="mx-auto flex max-w-xs animate-fade-in flex-col items-center gap-3 pt-16 text-center">
       <BrandMark size={32} className="opacity-60" />
       <h2 className="font-mono text-sm uppercase tracking-[0.2em] text-ink-muted">Nothing to measure yet</h2>
       <p className="font-mono text-xs leading-relaxed text-ink-faint">
-        Insights are worked out from days that have closed. Once your first day wraps up (at 06:00), streaks, bests
-        and patterns start to build here.
+        Insights use days that have closed. Once your first day wraps up at 06:00, your numbers start building here.
       </p>
       <Link
         href="/"
@@ -147,28 +126,57 @@ function EmptyState() {
 
 // --------------------------------------------------------------------------
 
-function StreaksCard({ data }: { data: Insights }) {
-  const { perfectDays, strongDays, weeks } = data.streaks;
+function OverallCard({ data }: { data: Insights }) {
+  const o = data.overview;
   return (
-    <section className={CARD}>
-      <h2 className={LABEL}>Streaks</h2>
+    <section className={`${CARD} h-full`}>
+      <h2 className={LABEL}>Overall</h2>
       <div className="mt-4 grid grid-cols-3 gap-3">
-        <StatTile label="Perfect days" current={perfectDays.current} best={perfectDays.longest} />
-        <StatTile label={`Days ${TARGET_PERCENT}%+`} current={strongDays.current} best={strongDays.longest} />
-        <StatTile label={`Weeks ${TARGET_PERCENT}%+`} current={weeks.current} best={weeks.longest} />
+        <Tile value={o.percent} suffix="%" label="Done" color={getProgressColor(o.percent)} />
+        <Tile value={o.finishedWeeks} label={o.finishedWeeks === 1 ? "Week" : "Weeks"} />
+        <Tile value={o.perfectDays} label="Perfect days" />
       </div>
-      <p className="mt-4 font-mono text-[11px] leading-snug text-ink-faint">
-        Rest days are skipped, and today only counts once it&apos;s finished — an unfinished day never breaks a streak.
+      <p className={`mt-4 ${CAPTION}`}>
+        {number(o.done)} of {number(o.total)} tasks done on finished days. A perfect day is every task done.
       </p>
     </section>
   );
 }
 
-function StatTile({ label, current, best }: { label: string; current: number; best: number }) {
+function Tile({ value, suffix = "", label, color }: { value: number; suffix?: string; label: string; color?: string }) {
+  const shown = useCountUp(value, 800);
+  return (
+    <div className="flex flex-col items-center rounded-xl bg-black/20 px-1.5 py-4 text-center">
+      <span className="font-mono text-3xl font-bold tabular-nums" style={{ color: color ?? "#ede6d8" }}>
+        {number(shown)}
+        {suffix}
+      </span>
+      <span className="mt-1 font-mono text-[11px] leading-tight text-ink-muted">{label}</span>
+    </div>
+  );
+}
+
+function StreaksCard({ data }: { data: Insights }) {
+  const { perfect, active } = data.streaks;
+  return (
+    <section className={`${CARD} h-full`}>
+      <h2 className={LABEL}>Streaks</h2>
+      <div className="mt-4 grid grid-cols-2 gap-3">
+        <StreakTile label="Perfect days" hint="every task done" current={perfect.current} best={perfect.longest} />
+        <StreakTile label="Active days" hint="at least one done" current={active.current} best={active.longest} />
+      </div>
+      <p className={`mt-4 ${CAPTION}`}>
+        Days in a row. Rest days are skipped, and today can add to a streak but never break it.
+      </p>
+    </section>
+  );
+}
+
+function StreakTile({ label, hint, current, best }: { label: string; hint: string; current: number; best: number }) {
   const shown = useCountUp(current, 800);
   const live = current > 0;
   return (
-    <div className="flex flex-col items-center rounded-xl bg-black/20 px-1.5 py-4 text-center">
+    <div className="flex flex-col items-center rounded-xl bg-black/20 px-2 py-4 text-center">
       <div className="flex items-center gap-1.5">
         <span
           className={`font-mono text-4xl font-bold tabular-nums ${live ? "text-accent-strong" : "text-ink-faint"}`}
@@ -178,75 +186,100 @@ function StatTile({ label, current, best }: { label: string; current: number; be
         </span>
         {live && <Flame size={16} className="text-clay-strong" />}
       </div>
-      <div className="mt-1 font-mono text-[10px] leading-tight text-ink-muted sm:text-[11px]">{label}</div>
-      <div className="mt-0.5 font-mono text-[10px] text-ink-faint">best {best}</div>
+      <div className="mt-1 font-mono text-[11px] text-ink-muted">{label}</div>
+      <div className="font-mono text-[10px] leading-tight text-ink-faint">{hint}</div>
+      <div className="mt-2 font-mono text-[10px] text-ink-faint">Best: {best}</div>
     </div>
   );
 }
 
-function BestsCard({ data }: { data: Insights }) {
-  const { bestWeek, mostTasks, biggestJump, perfectDays } = data.bests;
+function WeeksCard({ data }: { data: Insights }) {
+  const { list, average, best, latest } = data.weeks;
+  const first = list[0];
+  const last = list[list.length - 1];
+  const gap = latest?.vsAverage ?? null;
   return (
     <section className={`${CARD} h-full`}>
-      <h2 className={LABEL}>Personal bests</h2>
-      <ul className="mt-4 flex flex-col gap-3.5">
-        <BestRow
-          icon={<Trophy size={15} />}
-          label="Best week"
-          value={bestWeek ? `${bestWeek.percent}%` : null}
-          sub={bestWeek ? `Week ${bestWeek.weekNumber} \u00B7 ${bestWeek.done}/${bestWeek.total}` : "after your first finished week"}
-        />
-        <BestRow
-          icon={<ListChecks size={15} />}
-          label="Most tasks in a week"
-          value={mostTasks ? String(mostTasks.done) : null}
-          sub={mostTasks ? `Week ${mostTasks.weekNumber}` : "after your first finished week"}
-        />
-        <BestRow
-          icon={<TrendingUp size={15} />}
-          label="Biggest jump"
-          value={biggestJump ? `+${biggestJump.delta}` : null}
-          sub={
-            biggestJump
-              ? `Week ${biggestJump.fromWeekNumber} \u2192 ${biggestJump.weekNumber}`
-              : "needs two finished weeks in a row"
-          }
-        />
-        <BestRow
-          icon={<Sparkles size={15} />}
-          label="Perfect days"
-          value={String(perfectDays)}
-          sub="every task done, all time"
-        />
-      </ul>
+      <h2 className={LABEL}>Weeks</h2>
+      {!first || !last ? (
+        <p className="mt-4 font-mono text-xs leading-relaxed text-ink-faint">
+          Each finished week appears here as one square. Your first one closes on Saturday at 06:00.
+        </p>
+      ) : (
+        <>
+          <div
+            className="mt-4 flex animate-fade-in flex-wrap gap-1"
+            role="img"
+            aria-label={`${plural(list.length, "finished week")}, oldest first`}
+          >
+            {list.map((w) => (
+              <span
+                key={w.weekNumber}
+                className="h-[18px] w-[18px] rounded-[4px]"
+                style={{ backgroundColor: getProgressColor(w.percent) }}
+              />
+            ))}
+          </div>
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 font-mono text-[10px] text-ink-faint">
+            <span>
+              Week {first.weekNumber}
+              {first.weekNumber !== last.weekNumber && <> to {last.weekNumber}</>}
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="mr-0.5">Less</span>
+              {LEGEND_STOPS.map((p) => (
+                <span key={p} className="h-2.5 w-2.5 rounded-[2px]" style={{ backgroundColor: getProgressColor(p) }} />
+              ))}
+              <span className="ml-0.5">More</span>
+            </span>
+          </div>
+
+          <dl className="mt-5 grid grid-cols-3 gap-3 border-t border-border pt-4">
+            <Fact label="Average" value={average === null ? "\u2014" : `${average}%`} />
+            <Fact label="Best week" value={best ? `${best.percent}%` : "\u2014"} sub={best ? `Week ${best.weekNumber}` : undefined} />
+            <Fact label="Latest" value={latest ? `${latest.percent}%` : "\u2014"} sub={latest ? `Week ${latest.weekNumber}` : undefined} />
+          </dl>
+
+          {latest && gap !== null && (
+            <p className="mt-4 flex items-start gap-2 font-mono text-xs leading-snug text-ink-muted">
+              {gap > 0 ? (
+                <TrendingUp size={15} className="mt-px shrink-0 text-accent-strong" />
+              ) : gap < 0 ? (
+                <TrendingDown size={15} className="mt-px shrink-0 text-clay-strong" />
+              ) : (
+                <ArrowRight size={15} className="mt-px shrink-0 text-ink-faint" />
+              )}
+              <span>
+                Week {latest.weekNumber} was <span className="text-ink">{latest.percent}%</span>,{" "}
+                {gap === 0
+                  ? "right on your average."
+                  : `${plural(Math.abs(gap), "point")} ${gap > 0 ? "above" : "below"} your average.`}
+              </span>
+            </p>
+          )}
+        </>
+      )}
     </section>
   );
 }
 
-function BestRow({ icon, label, value, sub }: { icon: ReactNode; label: string; value: string | null; sub: string }) {
+function Fact({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
-    <li className="flex items-center gap-3">
-      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent-strong">
-        {icon}
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="font-mono text-xs text-ink">{label}</div>
-        <div className="truncate font-mono text-[11px] text-ink-faint">{sub}</div>
-      </div>
-      <div className={`font-mono text-xl font-bold tabular-nums ${value ? "text-ink" : "text-ink-faint"}`}>
-        {value ?? "\u2014"}
-      </div>
-    </li>
+    <div>
+      <dt className="font-mono text-[10px] text-ink-faint">{label}</dt>
+      <dd className="mt-1 font-mono text-xl font-bold tabular-nums text-ink">{value}</dd>
+      {sub && <dd className="font-mono text-[10px] text-ink-faint">{sub}</dd>}
+    </div>
   );
 }
 
 const BAR_AREA = 96;
 
-function ShapeCard({ data }: { data: Insights }) {
-  const { weekdays, sampleWeeks, trend } = data.shape;
+function DaysCard({ data }: { data: Insights }) {
+  const { weekdays, dayExtremes } = data;
   return (
     <section className={`${CARD} h-full`}>
-      <h2 className={LABEL}>Your week&apos;s shape</h2>
+      <h2 className={LABEL}>Days of the week</h2>
       <div className="mt-5 grid grid-cols-7 gap-2">
         {weekdays.map((w, i) => {
           const pct = w.percent;
@@ -268,41 +301,30 @@ function ShapeCard({ data }: { data: Insights }) {
                 )}
               </div>
               <span className="font-mono text-[10px] uppercase text-ink-faint">{DAY_SHORT_LABELS[w.dayIndex]}</span>
-              <span className="font-mono text-[9px] text-ink-faint">{w.days === 0 ? "" : `${w.days}d`}</span>
             </div>
           );
         })}
       </div>
+      <p className={`mt-4 ${CAPTION}`}>How much of the work you finish on each day.</p>
 
-      <p className="mt-4 font-mono text-[11px] leading-snug text-ink-faint">
-        Based on closed days across {sampleWeeks} {sampleWeeks === 1 ? "week" : "weeks"}
-        {sampleWeeks < 4 ? " \u2014 early numbers, they firm up after about 4 weeks." : "."}
-      </p>
-
-      <div className="mt-3 border-t border-border pt-3">
-        {trend ? (
-          <p className="flex items-start gap-2 font-mono text-xs leading-snug text-ink-muted">
-            {trend.delta > 0 ? (
-              <TrendingUp size={15} className="mt-px shrink-0 text-accent-strong" />
-            ) : trend.delta < 0 ? (
-              <TrendingDown size={15} className="mt-px shrink-0 text-clay-strong" />
-            ) : (
-              <ArrowRight size={15} className="mt-px shrink-0 text-ink-faint" />
-            )}
-            <span>
-              The last {trend.weeks === 1 ? "week" : `${trend.weeks} weeks`} averaged{" "}
-              <span className="text-ink">{trend.recent}%</span>
-              {trend.delta === 0
-                ? `, level with the ${trend.weeks === 1 ? "week" : `${trend.weeks} weeks`} before.`
-                : `, ${trend.delta > 0 ? "up" : "down"} ${Math.abs(trend.delta)} ${
-                    Math.abs(trend.delta) === 1 ? "point" : "points"
-                  } on the ${trend.weeks === 1 ? "week" : `${trend.weeks} weeks`} before.`}
-            </span>
-          </p>
-        ) : (
-          <p className="font-mono text-xs text-ink-faint">The trend appears after two finished weeks.</p>
-        )}
-      </div>
+      {dayExtremes && (
+        <dl className="mt-3 flex flex-col gap-2 border-t border-border pt-3 font-mono text-xs">
+          <div className="flex items-baseline justify-between gap-3">
+            <dt className="text-ink-muted">Strongest day</dt>
+            <dd className="text-ink">
+              {DAY_LABELS[dayExtremes.best.dayIndex]}{" "}
+              <span style={{ color: getProgressColor(dayExtremes.best.percent) }}>{dayExtremes.best.percent}%</span>
+            </dd>
+          </div>
+          <div className="flex items-baseline justify-between gap-3">
+            <dt className="text-ink-muted">Weakest day</dt>
+            <dd className="text-ink">
+              {DAY_LABELS[dayExtremes.worst.dayIndex]}{" "}
+              <span style={{ color: getProgressColor(dayExtremes.worst.percent) }}>{dayExtremes.worst.percent}%</span>
+            </dd>
+          </div>
+        </dl>
+      )}
     </section>
   );
 }
@@ -312,14 +334,12 @@ function TasksCard({ data }: { data: Insights }) {
   const rows = all ? data.tasks : data.tasks.slice(0, TASKS_SHOWN);
   return (
     <section className={`${CARD} h-full`}>
-      <h2 className={LABEL}>Task consistency</h2>
-      <p className="mt-1 font-mono text-[11px] text-ink-faint">
-        Last {TASK_WINDOW_WEEKS} weeks, closed days only &middot; weakest first
-      </p>
+      <h2 className={LABEL}>Tasks</h2>
+      <p className={`mt-1 ${CAPTION}`}>How often you finish each one. Weakest first.</p>
 
       {data.tasks.length === 0 ? (
         <p className="mt-5 font-mono text-xs leading-relaxed text-ink-faint">
-          A task is ranked once it has shown up on at least 3 closed days. Check back in a few days.
+          A task shows up here once it has had 3 finished days.
         </p>
       ) : (
         <ul className="mt-4 flex flex-col gap-3.5">
@@ -359,7 +379,7 @@ function TasksCard({ data }: { data: Insights }) {
         href="/manage"
         className="mt-4 flex items-center gap-1.5 border-t border-border pt-3 font-mono text-[11px] text-accent-strong transition-colors hover:text-ink"
       >
-        Reshape tasks in Manage Tasks <ArrowRight size={12} />
+        Edit tasks <ArrowRight size={12} />
       </Link>
     </section>
   );
@@ -372,9 +392,9 @@ function ClockCard({ data }: { data: Insights }) {
   const max = Math.max(1, ...hourBuckets);
   return (
     <section className={`${CARD} h-full`}>
-      <h2 className={LABEL}>When you tick</h2>
+      <h2 className={LABEL}>Time of day</h2>
       {ticks === 0 ? (
-        <p className="mt-5 font-mono text-xs text-ink-faint">No ticks recorded in the last {TASK_WINDOW_WEEKS} weeks.</p>
+        <p className="mt-4 font-mono text-xs text-ink-faint">No ticks yet.</p>
       ) : (
         <>
           <div className="mt-4 flex items-center gap-3">
@@ -383,15 +403,19 @@ function ClockCard({ data }: { data: Insights }) {
             </span>
             <div>
               <div className="font-mono text-2xl font-bold tabular-nums">{medianLabel}</div>
-              <div className="font-mono text-[11px] text-ink-faint">typical tick time &middot; {ticks} ticks</div>
+              <div className="font-mono text-[11px] text-ink-faint">
+                typical time you tick a task &middot; {plural(ticks, "tick")}
+              </div>
             </div>
           </div>
 
-          <div className="mt-5 grid h-14 items-end gap-[2px]" style={{ gridTemplateColumns: "repeat(24, minmax(0, 1fr))" } as CSSProperties}>
+          <div
+            className="mt-5 grid h-14 items-end gap-[2px]"
+            style={{ gridTemplateColumns: "repeat(24, minmax(0, 1fr))" } as CSSProperties}
+          >
             {hourBuckets.map((n, i) => (
               <div
                 key={i}
-                title={`${n} ${n === 1 ? "tick" : "ticks"}`}
                 className="origin-bottom animate-bar-grow rounded-[2px]"
                 style={{
                   height: n === 0 ? 2 : Math.max(4, Math.round((n / max) * 56)),
@@ -408,10 +432,9 @@ function ClockCard({ data }: { data: Insights }) {
           </div>
 
           {tickDays > 0 && (
-            <p className="mt-4 border-t border-border pt-3 font-mono text-xs leading-snug text-ink-muted">
-              <span className="text-clay-strong">Closed after midnight:</span> {afterMidnightDays} of {tickDays}{" "}
-              {tickDays === 1 ? "day" : "days"}
-              <span className="block text-[11px] text-ink-faint">the last tick landed in the 06:00 grace window</span>
+            <p className="mt-4 flex items-center gap-2 border-t border-border pt-3 font-mono text-xs text-ink-muted">
+              <span className="h-2 w-2 shrink-0 rounded-full bg-clay" aria-hidden="true" />
+              Finished after midnight on {afterMidnightDays} of {plural(tickDays, "day")}
             </p>
           )}
         </>

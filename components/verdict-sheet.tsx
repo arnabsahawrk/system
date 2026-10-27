@@ -1,12 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Flame, Minus, TrendingDown, TrendingUp, X } from "lucide-react";
+import { Minus, TrendingDown, TrendingUp, Trophy, X } from "lucide-react";
 import { DayRing } from "./day-ring";
-import { NoteEditor } from "./records-list";
+import { NoteEditor } from "./note-editor";
 import { WeekStrip } from "./week-strip";
 import { fireConfettiFrom } from "@/lib/confetti";
-import { TARGET_PERCENT, TASK_WINDOW_WEEKS } from "@/lib/goals";
 import { getProgressColor, getProgressMessage } from "@/lib/theme";
 import { useCountUp } from "@/lib/use-count-up";
 import type { Verdict } from "@/lib/types";
@@ -26,10 +25,10 @@ export function VerdictSheet({
 }: {
   verdict: Verdict;
   onClose: () => void;
-  onNoteSaved: (weekNumber: number, note: string | null) => void;
+  onNoteSaved: (weekNumber: number, note: string) => void;
 }) {
   const [closing, setClosing] = useState(false);
-  const [note, setNote] = useState(verdict.note ?? "");
+  const [note, setNote] = useState({ text: verdict.note ?? "", edited: verdict.noteEdited });
   const ringRef = useRef<HTMLDivElement>(null);
   const shown = useCountUp(verdict.percent, 900);
   const color = getProgressColor(verdict.percent);
@@ -135,10 +134,10 @@ export function VerdictSheet({
                   : `Same as Week ${prev.weekNumber}`}
             </span>
           )}
-          {verdict.weekStreak >= 2 && (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-clay/15 px-2.5 py-1 font-mono text-[11px] text-clay-strong">
-              <Flame size={13} />
-              {verdict.weekStreak} weeks at {TARGET_PERCENT}%+
+          {verdict.bestWeek && (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-accent/15 px-2.5 py-1 font-mono text-[11px] text-accent-strong">
+              <Trophy size={13} />
+              New best week
             </span>
           )}
         </div>
@@ -153,13 +152,13 @@ export function VerdictSheet({
         {weakest && weakest.percent < 100 && (
           <div className="mt-4 rounded-xl border-l-2 border-clay/60 bg-black/20 px-3.5 py-3">
             <div className="mb-0.5 font-mono text-[10px] uppercase tracking-[0.18em] text-clay-strong">
-              {weakest.percent >= TARGET_PERCENT ? "Weakest task" : "Needs attention"}
+              Weakest task
             </div>
             <p className="font-mono text-xs leading-snug text-ink">
               {weakest.name}
               <span className="text-ink-muted">
                 {" "}
-                &mdash; {weakest.percent}% over the last {TASK_WINDOW_WEEKS} weeks ({weakest.done} of {weakest.total})
+                &mdash; {weakest.percent}% overall ({weakest.done} of {weakest.total})
               </span>
             </p>
           </div>
@@ -168,9 +167,10 @@ export function VerdictSheet({
         <div className="mt-5">
           <NoteEditor
             weekNumber={verdict.weekNumber}
-            saved={note}
-            onSaved={(wn, n) => {
-              setNote(n ?? "");
+            saved={note.text}
+            edited={note.edited}
+            onSaved={(wn, n, e) => {
+              setNote({ text: n, edited: e });
               onNoteSaved(wn, n);
             }}
           />

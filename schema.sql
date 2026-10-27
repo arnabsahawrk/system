@@ -53,20 +53,40 @@ create table if not exists user_settings (
 insert into user_settings (singleton) values (true) on conflict do nothing;
 
 -- ------------------------------------------------------------
---  2. Task templates — the CURRENT plan. Editable any time; a
---     day's tasks in an already-running week are a frozen copy
---     (see week_tasks below), so editing here never touches this
---     week — only the next rollover reads this table.
+--  2. The plan for the weeks to come. Editable any time; a
+--     running week holds a frozen copy of its tasks (see
+--     week_tasks below), so editing here never touches this
+--     week — only the next rollover reads these two tables.
+--
+--     `tasks` is the list: every task, named once. `name_key`
+--     is the name boiled down to its letters and digits, so
+--     "Work", "work" and "Work-" can never be three tasks.
+--     `task_templates` says which task is on which day, and
+--     where in that day's order.
+--
+--     Upgrading from before the list existed? Nothing to run:
+--     the app moves the old table across the first time it is
+--     opened (lib/task-library.ts), keeping every task and day.
 -- ------------------------------------------------------------
 
-create table if not exists task_templates (
+create table if not exists tasks (
   id          uuid primary key default gen_random_uuid(),
-  day_index   smallint not null, -- 0=Saturday .. 6=Friday
   name        text not null,
+  name_key    text not null,
+  sort_order  integer not null default 0,
+  created_at  timestamptz not null default now(),
+
+  constraint task_name_len check (char_length(name) between 1 and 60),
+  constraint tasks_name_key_unique unique (name_key)
+);
+
+create table if not exists task_templates (
+  task_id     uuid not null references tasks(id) on delete cascade,
+  day_index   smallint not null, -- 0=Saturday .. 6=Friday
   sort_order  integer not null default 0,
 
-  constraint task_day_index_range check (day_index between 0 and 6),
-  constraint task_name_len check (char_length(name) between 1 and 60)
+  primary key (task_id, day_index),
+  constraint task_day_index_range check (day_index between 0 and 6)
 );
 create index if not exists task_templates_day_idx on task_templates(day_index, sort_order);
 
@@ -154,23 +174,26 @@ create table if not exists webauthn_challenges (
 create index if not exists webauthn_challenges_age_idx on webauthn_challenges(created_at);
 
 -- ------------------------------------------------------------
---  6. Week notes: an optional one-line "what got in the way?"
---     on a finished week. Kept in its own table on purpose, so a
---     note can be written or removed without ever touching the
---     week's task rows — history stays frozen, only the commentary
---     on it is editable.
+--  6. Week notes: an optional note on a finished week. Kept in
+--     its own table on purpose, so a note can be written
+--     without ever touching the week's task rows — history
+--     stays frozen, only the commentary on it is editable.
+--     A note is written once and can be changed once; `edited`
+--     records that the change has been used.
 --
 --     Already running? You don't need to do anything: the app
---     creates this table itself the first time it's needed. The
---     statement is here for fresh installs and for reference —
---     safe to run more than once.
+--     creates this table itself the first time it's needed, and
+--     brings an older one up to date (200 characters, `edited`).
+--     The statement is here for fresh installs and for reference
+--     — safe to run more than once.
 -- ------------------------------------------------------------
 
 create table if not exists week_notes (
   week_id    uuid primary key references weeks(id) on delete cascade,
   note       text not null,
+  edited     boolean not null default false,
   updated_at timestamptz not null default now(),
 
   -- Mirrors NOTE_MAX_LENGTH in lib/goals.ts.
-  constraint week_note_len check (char_length(note) between 1 and 160)
+  constraint week_note_len check (char_length(note) between 1 and 200)
 );

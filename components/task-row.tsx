@@ -67,7 +67,6 @@ export function TaskRow({
       {chain >= 2 && (
         <span
           key={chain}
-          title={`${chain} in a row`}
           aria-label={`${chain} in a row`}
           className={`shrink-0 rounded-full bg-clay/15 px-2 py-0.5 font-mono text-[10px] font-medium leading-4 text-clay-strong ${
             armed ? "animate-bump" : ""

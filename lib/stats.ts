@@ -49,25 +49,6 @@ export function rankTasks(tallies: TaskTally[], minSamples: number = MIN_TASK_SA
     .sort((a, b) => a.percent - b.percent || b.total - a.total || a.name.localeCompare(b.name));
 }
 
-/** Finished weeks in a row, walking back from `weekNumber`, at or above
- * `target`. A week missing from the list (or empty) ends the run. */
-export function weekStreakEndingAt(
-  weeks: { weekNumber: number; percent: number; total: number }[],
-  weekNumber: number,
-  target: number
-): number {
-  const byNumber = new Map(weeks.map((w) => [w.weekNumber, w]));
-  let n = weekNumber;
-  let count = 0;
-  for (;;) {
-    const w = byNumber.get(n);
-    if (!w || w.total <= 0 || w.percent < target) break;
-    count++;
-    n--;
-  }
-  return count;
-}
-
 /** 0–1439 minutes since midnight → "9:40 PM". */
 export function formatClock(minutesOfDay: number): string {
   const m = ((Math.round(minutesOfDay) % 1440) + 1440) % 1440;

@@ -1,6 +1,6 @@
 /**
  * Pure-logic checks for the numbers and motion the newer features rely on:
- * the pace line, streaks, personal bests, weekday shape, task ranking, the
+ * the pace line, task names, streaks, weeks, weekday shape, task ranking, the
  * tick clock, and the confetti physics. No database or browser needed —
  * every function under test takes plain values.
  *
@@ -9,18 +9,12 @@
 import assert from "node:assert/strict";
 import { computeInsights } from "../lib/insights";
 import type { DayRow, TaskRow, TickRow } from "../lib/insights";
-import { computePace, paceText, tasksNeededFor, openTaskCount } from "../lib/pace";
-import {
-  aggregatePercent,
-  formatClock,
-  median,
-  percentOf,
-  rankTasks,
-  runStats,
-  weekStreakEndingAt,
-} from "../lib/stats";
+import { computePace, paceText } from "../lib/pace";
+import { aggregatePercent, formatClock, median, percentOf, rankTasks, runStats } from "../lib/stats";
 import { addDaysToDateKey, diffDateKeys, getLocalMinutesOfDay } from "../lib/date";
 import { CONFETTI_COLORS, DRAG, createBurst, particleAlpha, stepParticles } from "../lib/confetti-engine";
+import { cleanTaskName, mergeOrder, plural, taskKey } from "../lib/task-name";
+import { applyTick } from "../lib/week-state";
 import type { CurrentWeek, DayIndex } from "../lib/types";
 
 let passed = 0;
@@ -38,77 +32,120 @@ function test(name: string, fn: () => void) {
 // --------------------------------------------------------------------------
 console.log("pace");
 
-test("tasksNeededFor matches the displayed percentage for every total and target", () => {
-  // The definition: the fewest completed tasks whose Math.round percentage
-  // reaches the target. Brute-forced so no rounding edge can hide.
-  for (const target of [50, 60, 70, 75, 80, 85, 90, 95, 100]) {
-    for (let total = 1; total <= 300; total++) {
-      let expected = total;
-      for (let c = 0; c <= total; c++) {
-        if (Math.round((c / total) * 100) >= target) {
-          expected = c;
-          break;
-        }
-      }
-      assert.equal(tasksNeededFor(total, target), expected, `total=${total} target=${target}`);
-    }
-  }
-  assert.equal(tasksNeededFor(0, 80), 0);
-});
-
-test("computePace: need / reached / out / none", () => {
-  assert.deepEqual(computePace(25, 10, 15), { kind: "need", target: 80, need: 10, open: 15 });
-  assert.deepEqual(computePace(25, 20, 5), { kind: "reached", target: 80 });
-  assert.deepEqual(computePace(25, 25, 0), { kind: "reached", target: 80 });
-  assert.deepEqual(computePace(25, 5, 10), { kind: "out", target: 80, best: 60 });
-  assert.deepEqual(computePace(25, 10, 10), { kind: "need", target: 80, need: 10, open: 10 });
-  assert.deepEqual(computePace(25, 10, 9), { kind: "out", target: 80, best: 76 });
-  assert.deepEqual(computePace(0, 0, 0), { kind: "none" });
-});
-
-test("paceText wording", () => {
-  assert.equal(paceText({ kind: "none" }), null);
-  assert.equal(paceText({ kind: "reached", target: 80 }), "80% target reached");
-  assert.equal(
-    paceText({ kind: "need", target: 80, need: 9, open: 12 }),
-    "Need 9 of the 12 open tasks to reach 80%"
-  );
-  assert.equal(
-    paceText({ kind: "need", target: 80, need: 1, open: 1 }),
-    "Need 1 of the 1 open task to reach 80%"
-  );
-  assert.equal(
-    paceText({ kind: "out", target: 80, best: 76 }),
-    "Best possible now: 76% \u2014 80% is out of reach"
-  );
-});
-
-test("openTaskCount counts only today and later, unticked", () => {
-  const mk = (dayIndex: DayIndex, flags: boolean[]) => ({
-    dayIndex,
-    dateKey: "2026-10-03",
-    tasks: flags.map((completed, i) => ({ id: `${dayIndex}-${i}`, name: "t", completed })),
+/** A week laid out as [done, total] for each day, Saturday to Friday. */
+function weekOf(days: [number, number][]): CurrentWeek {
+  let id = 0;
+  let done = 0;
+  let total = 0;
+  const built = days.map(([d, t], dayIndex) => {
+    done += d;
+    total += t;
+    return {
+      dayIndex: dayIndex as DayIndex,
+      dateKey: addDaysToDateKey("2026-10-03", dayIndex),
+      tasks: Array.from({ length: t }, (_, i) => ({ id: `t${id++}`, name: "t", completed: i < d })),
+    };
   });
-  const week: CurrentWeek = {
+  return {
     weekNumber: 1,
     startDateKey: "2026-10-03",
-    completed: 0,
-    total: 0,
-    percent: 0,
+    completed: done,
+    total,
+    percent: percentOf(done, total),
     finalized: false,
-    days: [
-      mk(0, [false, false]), // past — locked for good
-      mk(1, [true, false]), // past
-      mk(2, [true, false, false]), // today: 2 open
-      mk(3, [false]), // future: 1 open
-      mk(4, []),
-      mk(5, [true, true]),
-      mk(6, [false, false]), // future: 2 open
-    ],
+    days: built,
   };
-  assert.equal(openTaskCount(week, 2), 5);
-  assert.equal(openTaskCount(week, 0), 8);
-  assert.equal(openTaskCount(week, 6), 2);
+}
+
+test("computePace: what finishing today adds, on top of the days already settled", () => {
+  // Sat 4/5 and Sun 5/5 are over (9 done). Mon is today, 1 of 3 ticked. 35 tasks in the week.
+  const week = weekOf([[4, 5], [5, 5], [1, 3], [0, 5], [0, 5], [0, 6], [0, 6]]);
+  assert.equal(week.total, 35);
+  assert.deepEqual(computePace(week, 2), { kind: "open", open: 2, total: 3, target: 34 }); // (9 + 3) / 35 = 34.3%
+  assert.equal(paceText(computePace(week, 2)), "Finish 2 more today to reach 34%");
+});
+
+test("paceText: every wording", () => {
+  const untouched = weekOf([[4, 5], [5, 5], [0, 3], [0, 5], [0, 5], [0, 6], [0, 6]]);
+  assert.equal(paceText(computePace(untouched, 2)), "Finish all 3 today to reach 34%");
+
+  const single = weekOf([[4, 5], [5, 5], [0, 1], [0, 5], [0, 5], [0, 6], [0, 6]]);
+  assert.equal(paceText(computePace(single, 2)), "Finish today's task to reach 30%"); // 10 / 33
+
+  const done = weekOf([[4, 5], [5, 5], [3, 3], [0, 5], [0, 5], [0, 6], [0, 6]]);
+  assert.deepEqual(computePace(done, 2), { kind: "done", percent: 34 });
+  assert.equal(paceText(computePace(done, 2)), "Today's done \u2014 the week is at 34%");
+
+  const rest = weekOf([[4, 5], [5, 5], [0, 0], [0, 5], [0, 5], [0, 6], [0, 6]]);
+  assert.deepEqual(computePace(rest, 2), { kind: "rest", percent: 28 }); // 9 / 32
+  assert.equal(paceText(computePace(rest, 2)), "Rest day \u2014 the week holds at 28%");
+
+  assert.deepEqual(computePace(weekOf([[0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]]), 0), { kind: "none" });
+  assert.equal(paceText({ kind: "none" }), null);
+});
+
+test("the target is exactly the week's percentage once today's last task is ticked", () => {
+  const rand = seeded(42);
+  let checked = 0;
+  for (let n = 0; n < 400; n++) {
+    const days = Array.from({ length: 7 }, () => {
+      const total = Math.floor(rand() * 9);
+      return [Math.floor(rand() * (total + 1)), total] as [number, number];
+    });
+    const todayIndex = Math.floor(rand() * 7);
+    const week = weekOf(days);
+    const pace = computePace(week, todayIndex);
+    if (pace.kind !== "open") continue;
+
+    let ticked = week;
+    for (const t of week.days[todayIndex]!.tasks) if (!t.completed) ticked = applyTick(ticked, t.id, true);
+    assert.equal(ticked.percent, pace.target, `case ${n}`);
+    assert.deepEqual(computePace(ticked, todayIndex), { kind: "done", percent: pace.target });
+    checked++;
+  }
+  assert.ok(checked > 200, `only ${checked} open cases were generated`);
+});
+
+test("the target still lands exactly when a later day already has ticks", () => {
+  // Saturday is today (1 of 3 done), yet Sunday somehow has 2 ticks (a timezone change can do this).
+  const week = weekOf([[1, 3], [2, 4], [0, 5], [0, 5], [0, 5], [0, 5], [0, 4]]);
+  assert.equal(week.total, 31);
+  assert.deepEqual(computePace(week, 0), { kind: "open", open: 2, total: 3, target: 16 }); // (3 + 2) / 31
+});
+
+// --------------------------------------------------------------------------
+console.log("task names");
+
+test("cleanTaskName / plural", () => {
+  assert.equal(cleanTaskName("  Work   (SWE) \n"), "Work (SWE)");
+  assert.equal(plural(0, "task"), "0 tasks");
+  assert.equal(plural(1, "task"), "1 task");
+  assert.equal(plural(2, "task"), "2 tasks");
+  assert.equal(plural(1, "day"), "1 day");
+});
+
+test("taskKey: spellings of one name share a key, different names don't", () => {
+  for (const spelling of ["Work", "work", "WORK", "Work-", " Work. ", "W ork", "Wor-k"]) {
+    assert.equal(taskKey(spelling), taskKey("Work"), spelling);
+  }
+  assert.notEqual(taskKey("Work (SWE)"), taskKey("Work (Design)"));
+  assert.notEqual(taskKey("Read"), taskKey("Read (Book)"));
+  assert.equal(taskKey("Read (Book)"), taskKey("read  book"));
+  assert.notEqual(taskKey("Exercise 1"), taskKey("Exercise 2"));
+  // a name with no letters or digits keeps an identity of its own
+  assert.notEqual(taskKey("\u{1F4AA}"), taskKey("\u{1F3C3}"));
+  assert.equal(taskKey("\u{1F4AA}"), taskKey(" \u{1F4AA} "));
+  // other scripts work too (combining marks are kept)
+  const bn = taskKey("\u09AC\u09CD\u09AF\u09BE\u09AF\u09BC\u09BE\u09AE");
+  assert.ok(bn.length > 0);
+  assert.notEqual(bn, taskKey("\u09AA\u09DC\u09BE"));
+});
+
+test("mergeOrder follows the request and never drops anything", () => {
+  assert.deepEqual(mergeOrder(["b", "a"], ["a", "b", "c"]), ["b", "a", "c"]);
+  assert.deepEqual(mergeOrder(["z", "b", "b"], ["a", "b", "c"]), ["b", "a", "c"]); // unknown ids and repeats ignored
+  assert.deepEqual(mergeOrder([], ["a", "b"]), ["a", "b"]);
+  assert.deepEqual(mergeOrder(["c", "a", "b"], ["a", "b", "c"]), ["c", "a", "b"]);
 });
 
 // --------------------------------------------------------------------------
@@ -146,20 +183,6 @@ test("rankTasks drops thin samples and orders weakest first, stably", () => {
       ["Read", 90],
     ]
   );
-});
-
-test("weekStreakEndingAt", () => {
-  const weeks = [
-    { weekNumber: 4, percent: 90, total: 10 },
-    { weekNumber: 5, percent: 85, total: 10 },
-    { weekNumber: 6, percent: 79, total: 10 },
-    { weekNumber: 7, percent: 80, total: 10 },
-    { weekNumber: 8, percent: 100, total: 10 },
-  ];
-  assert.equal(weekStreakEndingAt(weeks, 8, 80), 2); // 8, 7 — then 6 misses
-  assert.equal(weekStreakEndingAt(weeks, 6, 80), 0);
-  assert.equal(weekStreakEndingAt(weeks, 5, 80), 2); // 5, 4
-  assert.equal(weekStreakEndingAt(weeks, 99, 80), 0);
 });
 
 test("formatClock / median", () => {
@@ -238,13 +261,18 @@ const ticks: TickRow[] = [
 
 const base = { todayKey: "2026-10-06", timeZone: TZ, days, tasks: taskRows, ticks };
 
-test("streaks: rest days skipped, open today neither breaks nor extends", () => {
+test("overview counts finished days only", () => {
   const r = computeInsights(base);
   assert.equal(r.hasData, true);
-  assert.equal(r.closedDays, 16); // 6 + 7 + 3 (rest day and future/today excluded)
-  assert.deepEqual(r.streaks.perfectDays, { current: 0, longest: 8 });
-  assert.deepEqual(r.streaks.strongDays, { current: 0, longest: 11 });
-  assert.deepEqual(r.streaks.weeks, { current: 2, longest: 2 });
+  // 24 + 31 + 12 done of 27 + 32 + 13 on the 16 closed days (the rest day, today and the future are out)
+  assert.deepEqual(r.overview, { percent: 93, done: 67, total: 72, finishedWeeks: 2, perfectDays: 12 });
+});
+
+test("streaks: rest days skipped, an open today neither breaks nor extends", () => {
+  const r = computeInsights(base);
+  assert.deepEqual(r.streaks.perfect, { current: 0, longest: 8 });
+  // every closed day had something done, and today has started: 16 + 1
+  assert.deepEqual(r.streaks.active, { current: 17, longest: 17 });
 });
 
 test("a finished today extends the streaks", () => {
@@ -252,38 +280,72 @@ test("a finished today extends the streaks", () => {
     ...base,
     days: days.map((d) => (d.date === "2026-10-06" ? { ...d, done: 4, total: 4 } : d)),
   });
-  assert.deepEqual(r.streaks.perfectDays, { current: 1, longest: 8 });
-  assert.deepEqual(r.streaks.strongDays, { current: 1, longest: 11 });
-  assert.equal(r.bests.perfectDays, 13);
+  assert.deepEqual(r.streaks.perfect, { current: 1, longest: 8 });
+  assert.equal(r.overview.perfectDays, 13);
 });
 
-test("a day closed short breaks the streak, yesterday perfect keeps it", () => {
+test("an untouched today neither breaks nor extends the active run", () => {
+  const r = computeInsights({
+    ...base,
+    days: days.map((d) => (d.date === "2026-10-06" ? { ...d, done: 0 } : d)),
+  });
+  assert.deepEqual(r.streaks.active, { current: 16, longest: 16 });
+});
+
+test("a closed day with nothing done ends the active run", () => {
+  const r = computeInsights({
+    ...base,
+    days: days.map((d) => (d.date === "2026-10-05" ? { ...d, done: 0 } : d)),
+  });
+  assert.deepEqual(r.streaks.active, { current: 1, longest: 15 });
+});
+
+test("a day closed short breaks the perfect streak, yesterday perfect keeps it", () => {
   const r = computeInsights({
     ...base,
     days: days.map((d) => (d.date === "2026-10-05" ? { ...d, done: 3, total: 3 } : d)),
   });
   // ...week 2 d1..d6 (6) + week 3 d0, d1, d2 (3) = 9 in a row, today still open
-  assert.deepEqual(r.streaks.perfectDays, { current: 9, longest: 9 });
+  assert.deepEqual(r.streaks.perfect, { current: 9, longest: 9 });
 });
 
-test("personal bests", () => {
+test("weeks: every finished week, the average, the best, the latest", () => {
   const r = computeInsights(base);
-  assert.deepEqual(r.bests.bestWeek, { weekNumber: 2, percent: 97, done: 31, total: 32 });
-  assert.deepEqual(r.bests.mostTasks, { weekNumber: 2, done: 31 });
-  assert.deepEqual(r.bests.biggestJump, { weekNumber: 2, fromWeekNumber: 1, delta: 8 });
-  assert.equal(r.bests.perfectDays, 12);
+  assert.deepEqual(r.weeks.list, [
+    { weekNumber: 1, percent: 89 },
+    { weekNumber: 2, percent: 97 },
+  ]);
+  assert.equal(r.weeks.average, 93); // (24 + 31) / (27 + 32), not a mean of means
+  assert.deepEqual(r.weeks.best, { weekNumber: 2, percent: 97 });
+  assert.deepEqual(r.weeks.latest, { weekNumber: 2, percent: 97, vsAverage: 4 });
 });
 
-test("weekday shape and trend", () => {
+test("a single finished week has nothing to compare with yet", () => {
+  const r = computeInsights({ ...base, days: days.filter((d) => d.weekNumber !== 2) });
+  assert.deepEqual(r.weeks.latest, { weekNumber: 1, percent: 89, vsAverage: null });
+});
+
+test("weekdays, and the strongest and weakest day", () => {
   const r = computeInsights(base);
-  const pct = r.shape.weekdays.map((w) => w.percent);
-  assert.deepEqual(pct, [93, 93, 89, 100, 78, 100, 100]);
   assert.deepEqual(
-    r.shape.weekdays.map((w) => w.days),
+    r.weekdays.map((w) => w.percent),
+    [93, 93, 89, 100, 78, 100, 100]
+  );
+  assert.deepEqual(
+    r.weekdays.map((w) => w.days),
     [3, 3, 3, 1, 2, 2, 2]
   );
-  assert.equal(r.shape.sampleWeeks, 3);
-  assert.deepEqual(r.shape.trend, { weeks: 1, recent: 97, prior: 89, delta: 8 });
+  assert.deepEqual(r.dayExtremes, { best: { dayIndex: 3, percent: 100 }, worst: { dayIndex: 4, percent: 78 } });
+});
+
+test("no strongest or weakest day until two weekdays differ", () => {
+  const one = computeInsights({ ...base, days: [day("2026-09-19", 0, 1, true, 5, 5)] });
+  assert.equal(one.dayExtremes, null);
+  const same = computeInsights({
+    ...base,
+    days: [day("2026-09-19", 0, 1, true, 5, 5), day("2026-09-20", 1, 1, true, 4, 4)],
+  });
+  assert.equal(same.dayExtremes, null);
 });
 
 test("task ranking comes through", () => {
@@ -326,11 +388,12 @@ test("a tick at exactly 06:00 sits in the first bucket, 05:59 in the last", () =
 test("no data at all", () => {
   const r = computeInsights({ todayKey: "2026-10-06", timeZone: TZ, days: [], tasks: [], ticks: [] });
   assert.equal(r.hasData, false);
-  assert.deepEqual(r.streaks.perfectDays, { current: 0, longest: 0 });
-  assert.equal(r.bests.bestWeek, null);
-  assert.equal(r.bests.biggestJump, null);
-  assert.equal(r.shape.trend, null);
-  assert.ok(r.shape.weekdays.every((w) => w.percent === null && w.days === 0));
+  assert.deepEqual(r.overview, { percent: 0, done: 0, total: 0, finishedWeeks: 0, perfectDays: 0 });
+  assert.deepEqual(r.streaks.perfect, { current: 0, longest: 0 });
+  assert.deepEqual(r.streaks.active, { current: 0, longest: 0 });
+  assert.deepEqual(r.weeks, { list: [], average: null, best: null, latest: null });
+  assert.equal(r.dayExtremes, null);
+  assert.ok(r.weekdays.every((w) => w.percent === null && w.days === 0));
   assert.equal(r.clock.medianLabel, null);
   assert.deepEqual(r.tasks, []);
 });
@@ -344,18 +407,22 @@ test("first day of week 1: only an open today", () => {
     ticks: [],
   });
   assert.equal(r.hasData, false); // nothing has closed yet
-  assert.deepEqual(r.streaks.perfectDays, { current: 0, longest: 0 });
+  assert.deepEqual(r.streaks.perfect, { current: 0, longest: 0 });
+  assert.deepEqual(r.streaks.active, { current: 1, longest: 1 }); // something is done today
 });
 
-test("trend window grows with history: 8+ weeks compares 4 vs 4", () => {
+test("all of history is counted, however long it gets", () => {
   const manyDays: DayRow[] = [];
-  // 9 finished weeks, one day each: percent = 50 for weeks 1-5, 80 for weeks 6-9
-  for (let w = 1; w <= 9; w++) {
-    manyDays.push(day(addDaysToDateKey("2026-06-06", (w - 1) * 7), 0, w, true, w <= 5 ? 5 : 8, 10));
+  // 60 finished weeks, one day each: 50% for weeks 1-30, 90% for weeks 31-60
+  for (let w = 1; w <= 60; w++) {
+    manyDays.push(day(addDaysToDateKey("2025-06-07", (w - 1) * 7), 0, w, true, w <= 30 ? 5 : 9, 10));
   }
   const r = computeInsights({ todayKey: "2026-10-06", timeZone: TZ, days: manyDays, tasks: [], ticks: [] });
-  assert.deepEqual(r.shape.trend, { weeks: 4, recent: 80, prior: 50, delta: 30 });
-  assert.equal(r.finishedWeeks, 9);
+  assert.equal(r.overview.finishedWeeks, 60);
+  assert.equal(r.weeks.list.length, 60);
+  assert.equal(r.weeks.average, 70);
+  assert.deepEqual(r.weeks.best, { weekNumber: 60, percent: 90 }); // ties go to the newer week
+  assert.deepEqual(r.weeks.latest, { weekNumber: 60, percent: 90, vsAverage: 20 });
 });
 
 // --------------------------------------------------------------------------

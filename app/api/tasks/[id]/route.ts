@@ -1,21 +1,13 @@
 import { NextResponse } from "next/server";
+import { isUuid } from "@/lib/api-params";
 import { isUnlocked } from "@/lib/session";
-import { removeTemplateTask, renameTemplateTask } from "@/lib/task-templates";
+import { removeTask } from "@/lib/task-templates";
 
-export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  if (!(await isUnlocked())) return NextResponse.json({ error: "Locked" }, { status: 401 });
-  const { id } = await params;
-  const body = await req.json().catch(() => ({}));
-  const name = typeof body?.name === "string" ? body.name : "";
-
-  const result = await renameTemplateTask(id, name);
-  if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
-  return NextResponse.json({ ok: true });
-}
-
+/** Deletes a task from the list and from every day it was on. */
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   if (!(await isUnlocked())) return NextResponse.json({ error: "Locked" }, { status: 401 });
   const { id } = await params;
-  await removeTemplateTask(id);
+  if (!isUuid(id)) return NextResponse.json({ error: "Not a valid task" }, { status: 400 });
+  await removeTask(id);
   return NextResponse.json({ ok: true });
 }

@@ -23,7 +23,7 @@ export function TrackerSection({
   loadingMore: boolean;
   currentWeek: CurrentWeek | null;
   todayIndex: number | null;
-  onNoteSaved: (weekNumber: number, note: string | null) => void;
+  onNoteSaved: (weekNumber: number, note: string) => void;
 }) {
   // The live week's strip comes from its own day cards, so it is always
   // exactly what the cards above show — no second source to drift.

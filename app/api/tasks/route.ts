@@ -1,28 +1,22 @@
 import { NextResponse } from "next/server";
 import { isUnlocked } from "@/lib/session";
-import { addTemplateTask, listTemplates } from "@/lib/task-templates";
-import type { DayIndex } from "@/lib/types";
+import { addTask, getPlan } from "@/lib/task-templates";
 
+/** The plan for the weeks to come: the task list and each day's tasks. */
 export async function GET() {
   if (!(await isUnlocked())) return NextResponse.json({ error: "Locked" }, { status: 401 });
-  return NextResponse.json(await listTemplates());
+  return NextResponse.json(await getPlan());
 }
 
-/** Adding/removing here (see also [id]/route.ts) never changes the week
- * that's currently running — it only changes what the *next* rollover
- * snapshots. That delay isn't a queue to manage, it falls straight out of
- * createWeek() only reading this table at rollover time. */
+/** Adds a task to the list. It isn't on any day until one is switched on
+ * (PUT /api/tasks/[id]/days). Like everything under /api/tasks it never changes
+ * the week that's running — only what the *next* rollover snapshots. */
 export async function POST(req: Request) {
   if (!(await isUnlocked())) return NextResponse.json({ error: "Locked" }, { status: 401 });
   const body = await req.json().catch(() => ({}));
-  const dayIndex = Number(body?.dayIndex);
   const name = typeof body?.name === "string" ? body.name : "";
 
-  if (!Number.isInteger(dayIndex) || dayIndex < 0 || dayIndex > 6) {
-    return NextResponse.json({ error: "dayIndex must be 0–6" }, { status: 400 });
-  }
-
-  const result = await addTemplateTask(dayIndex as DayIndex, name);
-  if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
-  return NextResponse.json({ ok: true, id: result.id });
+  const result = await addTask(name);
+  if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status });
+  return NextResponse.json({ ok: true, task: result.task });
 }

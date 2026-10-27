@@ -3,7 +3,7 @@
 import { Check, Target } from "lucide-react";
 import { BrandMark } from "./brand-mark";
 import { DayRing } from "./day-ring";
-import { computePace, openTaskCount, paceText } from "@/lib/pace";
+import { computePace, paceText } from "@/lib/pace";
 import { getProgressColor } from "@/lib/theme";
 import { useArmed } from "@/lib/use-armed";
 import { useCountUp } from "@/lib/use-count-up";
@@ -12,8 +12,8 @@ import type { CurrentWeek } from "@/lib/types";
 
 /** Deliberately no verdict here — the live, still-running week isn't one yet.
  * Messages only appear in Records once a week is done. The pace line is the
- * exception that proves the rule: it is arithmetic (how many of the ticks
- * that can still happen are needed for the target), not a judgment. */
+ * exception that proves the rule: it is arithmetic (what finishing today's
+ * tasks adds to the week), not a judgment. */
 export function WeeklySummaryCard({
   week,
   todayIndex,
@@ -32,7 +32,7 @@ export function WeeklySummaryCard({
   const color = getProgressColor(week.percent);
   const shown = useCountUp(week.percent);
   const armed = useArmed();
-  const pace = computePace(week.total, week.completed, openTaskCount(week, todayIndex));
+  const pace = computePace(week, todayIndex);
   const paceLine = paceText(pace);
 
   return (
@@ -79,14 +79,10 @@ export function WeeklySummaryCard({
             <p
               key={paceLine}
               className={`flex animate-fade-in items-center gap-1.5 font-mono text-[11px] leading-snug ${
-                pace.kind === "reached"
-                  ? "text-accent-strong"
-                  : pace.kind === "out"
-                    ? "text-clay-strong"
-                    : "text-ink-muted"
+                pace.kind === "done" ? "text-accent-strong" : "text-ink-muted"
               }`}
             >
-              {pace.kind === "reached" ? (
+              {pace.kind === "done" ? (
                 <Check size={12} strokeWidth={3} className="shrink-0" />
               ) : (
                 <Target size={12} className="shrink-0" />

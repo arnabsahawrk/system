@@ -2,8 +2,10 @@
 
 import { useEffect } from "react";
 import Link from "next/link";
-import { ChartColumn, Lock, ListChecks, Settings as SettingsIcon, X } from "lucide-react";
+import { ArrowUpRight, BookOpen, ChartColumn, Lock, ListChecks, Settings as SettingsIcon, X } from "lucide-react";
 import { BrandMark } from "./brand-mark";
+
+const PHILOSOPHY_URL = "https://app.notion.com/p/arnabsahawrk/SYSTEM-PHILOSOPHY-3bfb14a91aeb80548a99cfd97fe42abc";
 
 /**
  * Slide-in drawer from the right, same component at every screen width —
@@ -68,6 +70,7 @@ export function Sidebar({
           )}
           <SidebarLink icon={<ChartColumn size={17} />} label="Insights" href="/insights" />
           <SidebarLink icon={<ListChecks size={17} />} label="Manage Tasks" href="/manage" />
+          <SidebarExternal icon={<BookOpen size={17} />} label="System Philosophy" href={PHILOSOPHY_URL} />
           <SidebarItem icon={<SettingsIcon size={17} />} label="Settings" onClick={onOpenSettings} />
         </nav>
 
@@ -119,5 +122,21 @@ function SidebarLink({ icon, label, href }: { icon: React.ReactNode; label: stri
       {icon}
       {label}
     </Link>
+  );
+}
+
+/** Opens somewhere outside the app, in its own tab. */
+function SidebarExternal({ icon, label, href }: { icon: React.ReactNode; label: string; href: string }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="flex items-center gap-3 rounded-lg px-3 py-2.5 font-mono text-sm text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+    >
+      {icon}
+      {label}
+      <ArrowUpRight size={14} className="ml-auto text-ink-faint" aria-hidden="true" />
+    </a>
   );
 }

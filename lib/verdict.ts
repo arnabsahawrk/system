@@ -1,13 +1,12 @@
 import sql from "@/lib/db";
 import { addDaysToDateKey } from "@/lib/date";
-import { TARGET_PERCENT, TASK_WINDOW_WEEKS } from "@/lib/goals";
 import { getNote } from "@/lib/notes";
-import { percentOf, rankTasks, weekStreakEndingAt } from "@/lib/stats";
+import { percentOf, rankTasks } from "@/lib/stats";
 import type { DayIndex, DayStat, Verdict } from "@/lib/types";
 
-/** What a finished week looked like next to the ones around it: change since
- * the week before, the run of on-target weeks it belongs to, and the task
- * that has been slipping. Feeds the week-closed sheet and the weekly email.
+/** What a finished week looked like next to the ones before it: the change
+ * since the week before, whether it beat every earlier week, and the task that
+ * has slipped most overall. Feeds the week-closed sheet and the weekly email.
  * Returns null for a week that doesn't exist or hasn't finished yet. */
 export async function getWeekVerdict(weekNumber: number): Promise<Verdict | null> {
   const [week] = await sql<{ id: string; week_number: number; start_date: string; finalized: boolean }[]>`
@@ -15,25 +14,22 @@ export async function getWeekVerdict(weekNumber: number): Promise<Verdict | null
   `;
   if (!week || !week.finalized) return null;
 
-  const firstWeekOfWindow = weekNumber - (TASK_WINDOW_WEEKS - 1);
-
-  const [dayRows, weekRows, taskRows, note] = await Promise.all([
+  const [dayRows, weekRows, taskRows, saved] = await Promise.all([
     sql<{ day_index: number; total: number; done: number }[]>`
       select day_index, count(*)::int as total, count(*) filter (where completed)::int as done
       from week_tasks where week_id = ${week.id} group by day_index
     `,
-    // Recent finished weeks up to and including this one — enough to measure
-    // any streak a person is realistically on, newest first.
+    // Every finished week up to and including this one (a few numbers each).
     sql<{ week_number: number; total: number; done: number }[]>`
       select w.week_number, count(wt.id)::int as total, count(wt.id) filter (where wt.completed)::int as done
       from weeks w left join week_tasks wt on wt.week_id = w.id
       where w.finalized = true and w.week_number <= ${weekNumber}
-      group by w.id order by w.week_number desc limit 200
+      group by w.id order by w.week_number desc
     `,
     sql<{ name: string; total: number; done: number }[]>`
       select wt.name, count(*)::int as total, count(*) filter (where wt.completed)::int as done
       from week_tasks wt join weeks w on w.id = wt.week_id
-      where w.finalized = true and w.week_number between ${firstWeekOfWindow} and ${weekNumber}
+      where w.finalized = true and w.week_number <= ${weekNumber}
       group by wt.name
     `,
     getNote(weekNumber),
@@ -53,6 +49,8 @@ export async function getWeekVerdict(weekNumber: number): Promise<Verdict | null
     percent: percentOf(r.done, r.total),
   }));
   const prev = weeks.find((w) => w.weekNumber === weekNumber - 1 && w.total > 0) ?? null;
+  const earlier = weeks.filter((w) => w.weekNumber < weekNumber && w.total > 0);
+  const bestWeek = total > 0 && earlier.length > 0 && percent > Math.max(...earlier.map((w) => w.percent));
 
   const weakest = rankTasks(taskRows)[0] ?? null;
 
@@ -66,11 +64,12 @@ export async function getWeekVerdict(weekNumber: number): Promise<Verdict | null
     dayStats,
     prevWeek: prev ? { weekNumber: prev.weekNumber, percent: prev.percent } : null,
     delta: prev ? percent - prev.percent : null,
-    weekStreak: weekStreakEndingAt(weeks, weekNumber, TARGET_PERCENT),
+    bestWeek,
     perfectDays: dayStats.filter((d) => d.total > 0 && d.done === d.total).length,
     weakestTask: weakest
       ? { name: weakest.name, percent: weakest.percent, done: weakest.done, total: weakest.total }
       : null,
-    note,
+    note: saved?.note ?? null,
+    noteEdited: saved?.edited ?? false,
   };
 }

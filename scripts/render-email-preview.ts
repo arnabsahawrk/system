@@ -9,7 +9,7 @@ const sample = renderWeeklySummaryEmail({
   total: 25,
   percent: 88,
   // How the week compares with the ones around it — made-up numbers, purely to
-  // render the extra rows (change vs last week, streak, day strip, weakest task).
+  // render the extra rows (change vs last week, new best week, day strip, weakest task).
   verdict: {
     weekNumber: 7,
     startDateKey: "2026-09-19",
@@ -28,10 +28,11 @@ const sample = renderWeeklySummaryEmail({
     ],
     prevWeek: { weekNumber: 6, percent: 82 },
     delta: 6,
-    weekStreak: 3,
+    bestWeek: true,
     perfectDays: 3,
     weakestTask: { name: "Exercise", percent: 62, done: 5, total: 8 },
     note: null,
+    noteEdited: false,
   },
   days: [
     {

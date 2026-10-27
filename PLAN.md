@@ -1,50 +1,53 @@
 # System — plan and status
 
-## This round: a livelier day, a deeper look back
+## This round: tasks you define once, an overall look back
 
-Everything below was built from the plan agreed for this round, except backup/export (declined) — plus confetti for a finished day (requested).
+Built from the two last requests (the Manage Tasks redesign and the Insights / notes / skeleton round).
 
-- **The tick** (`components/task-row.tsx`, styles in `app/globals.css`): real `<input type="checkbox">` wearing a drawn box — check mark strokes in, box pops, name struck through by a sweeping line (`box-decoration-break: clone` so a wrapped name gets one per line). 44px rows. Footer emoji replaced with the check icon.
-- **Confetti** (`lib/confetti-engine.ts` physics, `lib/confetti.ts` canvas): one burst from the box you ticked when it completes the day; a second, wider puff 150ms later. One full-screen click-through canvas that exists only while pieces are in flight. Throttled to one celebration per 1.2s; off under reduced motion.
-- **Optimistic ticks, no re-fetch** (`components/dashboard.tsx`, `lib/week-state.ts`): ticks apply instantly (totals and percentage recomputed locally) and each request carries the exact state wanted, so it is idempotent. A failed save shows a notice that clears itself and re-syncs from the server once the burst settles. A slow older response can never paint over a newer tick (load sequence + in-flight counters).
-- **One round trip on load**: `/api/week/current` now returns `{ week, settings }`.
-- **Today-first phone layout** (`components/week-view.tsx`, `components/collapse.tsx`): <640px is Today → Weekly (rings are buttons) → the other days as accordion rows; ≥640px the original grid. `Collapse` animates real heights (old Safari can't animate CSS grid rows).
-- **Pace line + task chains** (`lib/pace.ts`, `lib/weeks.ts getChainBases`): arithmetic follows the *rounded* displayed percentage exactly (brute-force checked for every total up to 300 and every common target). Chains are computed in one SQL pass per load, today's tasks only.
-- **Records 2.0** (`components/records-list.tsx`, `components/week-strip.tsx`): seven-cell strip per week, stacked on phones / one line from 1024px, tap-to-expand post-mortem (`GET /api/week/[weekNumber]`), optional note (`PUT /api/week/[weekNumber]/note`). The live week's strip is built from the same day cards shown above it.
-- **Week notes** (`lib/notes.ts`): own table, `week_notes`, so a note never touches task rows. Created by the app on first use *and* in `schema.sql` section 6. If it can't be reached the Records list still loads, just without notes.
-- **Insights** (`lib/insights.ts` pure maths, `lib/insights-db.ts` queries, `components/insights-view.tsx`, `/insights`): streaks, bests, weekday shape + trend, task consistency, tick clock. Nothing stored.
-- **Week-closed sheet + email** (`lib/verdict.ts`, `components/verdict-sheet.tsx`, `lib/email.ts`): same numbers in both places. Only the week that *just* ended qualifies, once per device.
-- **Instant open**: loading skeleton instead of a pulsing logo; `public/sw.js` + `public/offline.html` (static files only, never data); registered in production only.
-- Housekeeping: shared `addDaysToDateKey` moved to `lib/date.ts`; one `goToUnlock()` helper (`lib/nav.ts`) instead of repeated hard redirects, so lint is warning-free; Postgres "already exists" notices silenced in `lib/db.ts`; an empty day now carries its real date (was the week's first date).
+- **Manage tasks, rebuilt** (`components/manage-tasks.tsx`, `lib/task-templates.ts`, `lib/task-library.ts`, `lib/task-name.ts`): a *Tasks* list (type a task once, add field at the bottom, open it to switch days on and off, reorder, delete with a confirm) and a *Week* of seven day cards (reorder, take a task off a day, no adding). Counts and singular/plural everywhere. Changes show at once and are sent through one ordered queue; a failure shows a notice and re-syncs.
+- **Duplicate tasks can't happen.** `tasks` holds each name once; `name_key` (letters and digits only, any case) is unique, so "Work" / "work" / "Work-" are one task. A day is a row in `task_templates (task_id, day_index, sort_order)`. Limits: 60 tasks, 16 per day.
+- **Existing data moves itself** (`ensureTaskLibrary`): old one-row-per-day-and-name templates become the list plus day rows, in one transaction under an advisory lock, on first use. Look-alike names merge under the first spelling met. Weeks and history are never touched. The weekly rollover now copies a week from the plan in a single statement, renumbering each day's order 0..n-1.
+- **Pace line = today's growth.** "Finish 2 more today to reach 34%": ticks so far plus what is still open today. No weekly target, no 80%.
+- **The 80% idea is gone everywhere** — pace line, Insights, week-closed sheet, email. In their place: a "New best week" badge, and the weakest task measured over every finished week.
+- **Insights, overall and plain** (`lib/insights.ts`, `components/insights-view.tsx`): overall completion, weeks and perfect days; perfect-day and active-day streaks; every finished week as a square with average / best / latest; weekday bars with strongest and weakest day; per-task consistency; time of day and after-midnight days. All of history, no 4- or 8-week windows.
+- **Week note** (`components/note-editor.tsx`, `lib/notes.ts`): renamed "Week note", 200 characters, a pencil opens it, one change allowed, then final (`week_notes.edited`, enforced by the server). A first note still saves when you leave the field; the one change only saves on purpose.
+- **Phone: opened days are faded and locked**, like the wide cards (lock on the row too).
+- **Skeletons everywhere**: dashboard (now including Records, exact phone and wide shapes), Manage tasks, Insights, the biometric row; `loading.tsx` for Manage and Insights so they appear the instant the menu item is tapped.
+- **Sidebar**: "System Philosophy" above Settings, opening your Notion page in a new tab.
+- Housekeeping: no tooltips anywhere (the last `title` attributes removed), dead `tracker-table.tsx` deleted, hard redirects use `goToUnlock()`.
 
 ## How the numbers are defined
 
-So the pace line, streaks, Insights, the sheet and the email can never disagree (`lib/goals.ts`, `lib/stats.ts`):
+So the pace line, streaks, Insights, the sheet and the email can never disagree (`lib/stats.ts`, `lib/pace.ts`, `lib/insights.ts`):
 
-- **On target** = 80% or more of the *rounded* percentage, for a day or a week.
-- **Streaks** run over days that have tasks. Rest days are skipped. A day still open neither breaks nor extends a streak; once it is perfect (or ≥80%) it counts.
-- **Task consistency** uses closed days in the last 8 weeks only (future days are not misses) and ranks a task only once it has 3 closed occurrences.
+- **Percentages** are always `Math.round` of the share, for a day, a week or the whole history.
+- **Pace**: target = round((ticked so far + still open today) ÷ the week's tasks). After the last tick the week's percentage is exactly that figure.
+- **Streaks** run over days that have tasks; rest days are skipped. *Perfect* = every task done; *active* = at least one done. A day still open neither breaks nor extends a streak; once it qualifies it counts.
+- **Overall** and the weekday bars use closed days only (future days are not misses). The week average is weighted by task count, not a mean of means.
+- **Task consistency** uses every closed day and ranks a task only once it has 3 closed occurrences. Tasks are matched by name.
 - **A chain** is consecutive *scheduled* occurrences (matched by name) that were fully done, ending at the last closed one.
-- **Clock**: days are measured from the 06:00 start, so a tick at 00:30 belongs to the day before and sorts after 11 PM. "Closed after midnight" = the day's last tick fell in the 06:00 grace window.
+- **Clock**: days are measured from the 06:00 start, so a tick at 00:30 belongs to the day before and sorts after 11 PM. "After midnight" = the day's last tick fell between midnight and 06:00.
+- **A note** is written once and changed once; clearing is not possible, so it can't be used to start over.
 
 ## Verified this round
 
-- `npm run verify:logic`: 26 checks — pace maths (brute force against `Math.round`), streak and run helpers, insights on a hand-built three-week dataset, clock/bucket edges at exactly 06:00 and 05:59, confetti physics.
-- Data layer against real Postgres 16 with four seeded weeks whose figures were worked out by hand first: chains (7 and 1), streaks, bests, weekday shape, task ranking, clock, verdicts for weeks 1 and 3, notes (trim, collapse, clear, validate, 160-char limit, finished-weeks-only), idempotent ticks, the 05:59 / 06:00 lock boundary, and the email with and without a verdict — 17 checks.
-- Headless Chromium against a production build with the clock pinned (375×667 phone and 1280×900 desktop, Asia/Dhaka): first-open sheet; today-first order; pace line before/after a tick; chain badges; confetti appears, paints, and removes itself; persistence across reload; no confetti on a card that loads complete or on un-ticking; Records expand/collapse as an accordion, post-mortem contents, note save/clear/persist; rest-of-week rows read-only and un-tickable; strip taps; desktop grid and locked-card dimming; Insights on both layouts; service worker registers, caches static files only, and the offline page appears with the server down.
-- Edge scenarios: every new endpoint 401s while locked and validates its input (400/404/409); a dropped save shows the notice and re-syncs; rapid tick/untick and triple-tap bursts end with screen and server agreeing; Friday with the target out of reach; a rest day as today; the real Saturday 06:00 rollover (week finalized, next week created, sheet shows a −26 drop with no streak chip); an empty install.
+- `npm run verify:logic`: 33 checks — pace (including 400 random weeks, and a week with ticks on a later day, always landing exactly on the target), task names (look-alike spellings, other scripts), list ordering, the new Insights maths on a hand-built three-week dataset and on 60 weeks, clock/bucket edges at exactly 06:00 and 05:59, confetti physics.
+- Data layer against real Postgres 16, fresh install (21 checks): names and look-alikes (including three simultaneous adds of one name), days on/off and the 16-per-day and 60-per-list limits (a refused change leaves nothing half-done), ordering from a stale screen, delete, the first reset after a task exists, a week copied from the plan, a mid-week plan change leaving the running week alone, verdict, history, all-time insights, the note rules, "new best week", and pause/resume with tasks on no day.
+- The same against an **old-layout database** (25 old template rows, 50 task rows, an old notes table), upgraded by four server processes starting at once: tasks merged and ordered as expected, old table gone, history identical by checksum, notes table brought to 200 characters with the old note kept, and the next week built from the upgraded plan.
+- Headless Chromium against a production build, phone 375×667 and desktop 1280×900, nine seeded weeks: the week-closed sheet, today-first layout, pace line before and after the last tick, confetti appears and removes itself, persistence across reload, sidebar order and link (new tab, `noopener`), the note through add → pencil → one change → final (and a hand-made third write refused with 409), a note saved when its field is left, Manage tasks end to end (add, open, pick days, day card and picker staying in step, look-alike refused, reorder in the list and in a day, Every day / Clear all, delete with confirm, matches the server after reload), Insights, opened days faded and locked with the clock on a Wednesday, and the loading skeletons captured mid-load on a slow network.
 - `tsc`, `eslint` (0 errors, 0 warnings), `next build` clean.
-- Bugs found and fixed along the way: entrance animations were holding `opacity: 1` and overriding the dimming on locked cards (caught in a screenshot, now a regression check); `border-border/70` is invalid because the border token is rgba, which made Records borders far too bright; streak tile labels wrapped unevenly on a 375px screen; a leftover `grid-cols-24` class that Tailwind doesn't have.
+- Bugs found and fixed along the way: the add field's placeholder showed a literal `\u2026`; the note hint said "Saved" instead of "You can change this once" if the pencil was tapped within two seconds of saving; the pace formula assumed no later day could have ticks (a timezone change can do that) — it now can't go wrong.
 
 ## Not verified
 
-- Real iOS Safari 15 / an actual iPhone 7: everything was checked in Chromium emulating a 375px touch viewport. Features were chosen from what iOS 15 supports (no `:has()`, `canvas.roundRect`, `Array.at`, etc.), but real-device smoothness of the confetti and the entrance animations is untested.
-- Live Brevo send, Neon, Vercel deploy and cron — no key or network for these in the sandbox. The email template was rendered and viewed, and the send path runs up to the provider call.
+- Real iOS Safari 15 / an actual iPhone 7: everything was checked in Chromium emulating a 375px touch viewport.
+- The upgrade on your actual Neon database (tested on local Postgres 16 with a copy of the old layout), and the advisory lock through Neon's pooler (transaction-level locks are the pooler-safe kind, but this was not run there).
+- Live Brevo send, Vercel deploy and cron. The email template was rendered (`preview/email-preview.html`); the send path runs up to the provider call.
 - The service worker inside an installed iOS home-screen app.
 - Reduced-motion behaviour was reasoned from the CSS and the engine's early return, not tested with the OS setting.
 
 ## Next (still parked)
 
 1. True drag-and-drop for task reordering — arrows are still the safer choice on touch.
-2. The 80% target as a setting (it's one constant in `lib/goals.ts`).
+2. Renaming a task (history and chains match by name, so this needs a stable id on `week_tasks` first).
 3. Evening "still open" reminders — iOS 15 can't receive web push, so this would be email-only, and the app is deliberately quiet.
